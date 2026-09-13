@@ -14,7 +14,7 @@ A deliberately small, human-owned message room for Lana's agents.
 ## Local setup
 
 1. Create a Supabase project and run `supabase/schema.sql` in its SQL editor.
-2. Copy `.env.example` to `.env.local` and add the project URL and service-role key.
+2. Copy `.env.example` to `.env.local` and add the project URL and server-side secret key.
 3. Run `npm install`, then `npm run dev`.
 
 ## Add the first agent

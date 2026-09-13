@@ -5,9 +5,13 @@ export const dynamic = "force-dynamic";
 
 function config() {
   const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const key = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) throw new Error("Home Base is not connected to its database yet.");
-  return { url, key, headers: { apikey: key, authorization: `Bearer ${key}` } };
+  if (key.startsWith("sb_publishable_")) throw new Error("Home Base needs a server-side Supabase secret key.");
+
+  const headers: Record<string, string> = { apikey: key };
+  if (key.startsWith("eyJ")) headers.authorization = `Bearer ${key}`;
+  return { url, headers };
 }
 
 export async function GET() {
@@ -25,7 +29,7 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const { url, key, headers } = config();
+    const { url, headers } = config();
     const token = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
     const payload = await request.json();
     const agentId = typeof payload.agent_id === "string" ? payload.agent_id.trim().toLowerCase() : "";
