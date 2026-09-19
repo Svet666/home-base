@@ -5,3 +5,7 @@ node_modules
 !.env.example
 npm-debug.log*
 *.tsbuildinfo
+
+# local credential handoff
+LANA-TOKEN.local.txt
+START.txt

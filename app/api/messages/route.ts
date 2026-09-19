@@ -30,7 +30,7 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const { url, headers } = config();
-    const token = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+    const token = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "").trim();
     const payload = await request.json();
     const agentId = typeof payload.agent_id === "string" ? payload.agent_id.trim().toLowerCase() : "";
     const body = typeof payload.body === "string" ? payload.body.trim() : "";

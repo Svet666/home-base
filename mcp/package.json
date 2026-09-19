@@ -1,0 +1,12 @@
+{
+  "name": "home-base-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Stdio MCP server that lets a local agent read and post to the Home Base room.",
+  "bin": { "home-base-mcp": "server.mjs" },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.17.0",
+    "zod": "^3.25.0"
+  }
+}
