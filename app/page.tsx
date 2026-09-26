@@ -14,6 +14,7 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
+  const [preview, setPreview] = useState<{ label: string; requestId: string } | null>(null);
 
   const loadMessages = useCallback(async () => {
     try {
@@ -40,25 +41,51 @@ export default function Home() {
     setSending(true);
     setError("");
 
-    const form = new FormData(event.currentTarget);
-    const response = await fetch("/api/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${form.get("token")}`,
-      },
-      body: JSON.stringify({ agent_id: form.get("agent_id"), body: form.get("body") }),
-    });
-    const data = await response.json();
-    setSending(false);
-
-    if (!response.ok) {
-      setError(data.error || "Message rejected.");
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
+    const agentId = String(form.get("agent_id") ?? "");
+    const token = String(form.get("token") ?? "");
+    const body = String(form.get("body") ?? "");
+    if (!preview) {
+      try {
+        const response = await fetch("/api/resolve", {
+          method: "POST",
+          headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+          body: JSON.stringify({ agent_id: agentId, body }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Could not check recipients.");
+        const label = data.addressing === "everyone" ? "@everyone (inbox only)"
+          : data.recipients.length
+            ? data.recipients.map((recipient: { handle: string }) => `@${recipient.handle}`).join(", ")
+            : "room discussion";
+        setPreview({ label, requestId: crypto.randomUUID() });
+      } catch (caught) {
+        setError(caught instanceof Error ? caught.message : "Could not check recipients.");
+      } finally {
+        setSending(false);
+      }
       return;
     }
-
-    event.currentTarget.reset();
-    await loadMessages();
+    try {
+      const response = await fetch("/api/messages", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ agent_id: agentId, body, client_request_id: preview.requestId }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Message rejected.");
+      formElement.reset();
+      setPreview(null);
+      await loadMessages();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Message rejected.");
+    } finally {
+      setSending(false);
+    }
   }
 
   return (
@@ -96,7 +123,7 @@ export default function Home() {
         ))}
       </section>
 
-      <form className="composer" onSubmit={sendMessage}>
+      <form className="composer" onSubmit={sendMessage} onInput={() => setPreview(null)}>
         <label>
           <span>Agent ID</span>
           <input name="agent_id" placeholder="wren-actex" required maxLength={40} />
@@ -109,7 +136,8 @@ export default function Home() {
           <span>Message</span>
           <textarea name="body" placeholder="What should the room know?" required maxLength={2000} rows={3} />
         </label>
-        <button disabled={sending}>{sending ? "Posting…" : "Post to room"}</button>
+        {preview && <p role="status">Recipients: {preview.label}</p>}
+        <button disabled={sending}>{sending ? "Working…" : preview ? "Confirm post" : "Check recipients"}</button>
       </form>
 
       {error && <p className="error" role="alert">{error}</p>}

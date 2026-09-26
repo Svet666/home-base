@@ -1,0 +1,156 @@
+# Home Base MCP: addressed messages and agent handoffs
+
+## Outcome
+
+Let Lana and her agents exchange questions, assignments, and results through Home Base without manually copying messages between terminals.
+
+Preserve ordinary room discussion. Explicitly addressed messages can request attention; room-wide messages do not automatically invoke agents.
+
+## 1. Messaging contract
+
+Each message exposes:
+
+- Stable message ID and timestamp.
+- Authenticated sender identity. Lana's future phone client uses a revocable,
+  Lana-only credential stored in the phone's secure storage, not in the app binary.
+- Body and recognized recipient handles.
+- Optional `reply_to` identifying the message being answered.
+- Optional context preference: `fresh` or `continue`.
+- Optional expiry for requests that should not run later.
+
+Use unique registered name handles such as `@Claire`, `@Wren`, and `@Lana`,
+case-insensitively. Resolve them to stable identity IDs when posting and store
+the resolved recipients. Display names alone do not establish sender identity.
+Quoted mentions do not invoke agents; clients expose resolved recipients before
+sending. Unknown or ambiguous handles fail visibly rather than silently posting.
+
+General room messages have no invocation recipients. Explicit `@everyone`
+addresses the current active roster as a room-wide inbox notification; it does
+not start every agent. Only direct name tags can request agent attention.
+
+## 2. MCP tools
+
+**`room_info`**
+
+Return the caller’s configured identity and active roster, including canonical handles. Never expose credentials.
+
+**`read_room`**
+
+Accept a cursor, page size, and optional filter for messages addressed to the caller. Return structured messages, a continuation cursor, and whether more pages remain. Allow reading surrounding conversation for context.
+
+Fix existing paging before adding invocation features: read unseen messages oldest first, and never advance past messages omitted because of the page limit. Mention filtering must preserve correct paging.
+The cursor follows a serialized delivery order separate from the stable message
+ID, so a message committed late cannot be skipped by a newer committed message.
+
+**`post_message`**
+
+Accept the body, optional reply reference, context preference, expiry, and a client-generated retry identifier. Resolve recipients consistently across posting clients.
+
+Return the created message ID and resolved recipients. Retrying the same submission must return the existing result rather than create another message.
+
+**`preview_message`**
+
+Resolve the body's name tags and optional linked-reply recipient without posting,
+so an agent can check the audience before sending. Browser and posting-link
+clients expose the same server-resolved preview.
+
+## 3. Questions and replies
+
+Agents can ask Lana or another agent for clarification, information, decisions, or approval.
+
+An answer links to its question and addresses the intended recipient. This allows the correct work to resume without interpreting an isolated “yes.”
+
+Delivery and resolution are separate: reading a question does not mark it answered. Pending questions must remain recoverable after a session restart.
+
+An answer can grant only authority the verified sender is allowed to grant and
+the host is allowed to exercise. Current room posting methods do not authorize
+irreversible work. Mentions, sender display names, and quoted statements do
+not grant permissions. A posting link
+proves possession of that link, not Lana's identity; Wren cannot take operational
+approval from it. The Lana phone credential and its provisioning are separate
+client work before remote operational approvals are enabled.
+
+## 4. Context control
+
+Support two preferences:
+
+- **Fresh:** start a new agent conversation with the agreed plan, selected handoff, relevant evidence, and unresolved questions.
+- **Continue:** deliver into the corresponding existing session when available. If unavailable, report that explicitly.
+
+Default feature-coder handoffs to fresh sessions. Keep the attended copilot conversation continuous unless Lana requests otherwise.
+
+The host performs session creation or reset; MCP only carries the preference. Resetting a conversation does not reset room delivery progress or replay old assignments.
+
+Before replacing an active coder session, finish or checkpoint its work and preserve the result. Do not discard an active session merely because a new message arrives.
+
+## 5. Host delivery contract
+
+Define this contract now; implement listeners separately.
+
+A listener:
+
+- Polls within its explicitly enabled operating window.
+- Saves delivery progress durably and drains remaining pages.
+- Records message IDs to prevent duplicate invocation after retries or restarts.
+- Distinguishes received, started, waiting, completed, expired, and failed requests.
+- Delivers follow-ups to the appropriate running session without launching duplicate workers.
+- Honors stop requests and prevents expired requests from starting.
+
+A message addressed to a human is available for that person’s client to notify them. A room-wide message does not start an agent.
+
+The room delivers requests; the host enforces the agent's role and operating permissions.
+An agent may directly tag another agent needed for a task Lana has already
+assigned. It may request information, clarification, or a bounded contribution;
+the tag cannot create new scope. Hosts apply their operating windows and turn
+limits to avoid reply loops.
+
+## 6. Initial uses
+
+**Feature development:** deliver an already-approved plan slice to a fresh coder session, return evidence to the copilot, and support questions during the slice. Existing scope, Git, and release boundaries remain in force.
+
+**Remote Wren assistance:** deliver Lana’s authenticated request to the office host, acknowledge receipt and startup separately, and allow diagnostic questions and specific operational approvals. Emergency wording does not expand authority.
+
+The Android app will use the same messaging API, identity, recipient, and reply contract. Its login experience and notifications are separate work.
+
+## 7. Implementation slices
+
+1. **Reliable messages:** server-side paging, safe cursors, returned message IDs, duplicate-post protection.
+2. **Conversation addressing:** roster discovery, unique name handles,
+   `@everyone` inbox delivery, recipient preview, linked replies, shared API/MCP
+   behavior. Define one server resolution rule for bearer, browser, and posting-link clients.
+3. **Handoff metadata:** fresh/continue preference and expiry, with documented host behavior.
+4. **Manual integration trial:** two identities exchange one assignment, one clarification, and one result before any listener is enabled.
+
+Keep this as one feature plan, with progress and evidence recorded here.
+
+## Acceptance checks
+
+- A backlog exceeding 100 messages is fully retrievable without skipped deliveries.
+- Restarting or retrying does not lose a handoff or invoke it twice.
+- Exact handles resolve correctly; quoted names and general discussion do not invoke anyone.
+- Replies remain attached to the correct question across fresh sessions.
+- Context reset preserves message progress.
+- Expired requests do not start work.
+- Existing room reading and posting continue to work.
+- Credentials remain outside tool inputs and returned message data.
+
+## Completion boundary
+
+Deliver the API/MCP changes, tests, and a documented client/host contract. Automatic listeners, schedules, Android development, production deployment, and autonomous operational permissions require separate work.
+
+## Local implementation checkpoint — September 26, 2026
+
+Branch: `feature/addressed-messages` in an isolated worktree.
+
+- Implemented API paging with a serialized delivery cursor, message IDs,
+  sender-scoped retry IDs, exact name-handle resolution, `@everyone` inbox
+  addressing, linked replies, context preference, and expiry metadata.
+- Implemented MCP roster, paged reads, recipient preview, and posting; the
+  browser and posting-link clients also use server resolution and can preview.
+- Added the additive database migration and host delivery contract.
+- Verified a production build, parser tests, a mocked API trial covering a
+  130-message backlog and two identities, an MCP protocol smoke test, and the
+  migration on empty and populated disposable PostgreSQL databases.
+- Still pending: applying the migration to Home Base, deploying the app,
+  checking real provisioned identities and handles, and the live manual
+  assignment/clarification/result trial. No listener or phone app was built.
