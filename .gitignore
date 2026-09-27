@@ -9,3 +9,6 @@ npm-debug.log*
 # local credential handoff
 LANA-TOKEN.local.txt
 START.txt
+
+# Host-side dry-run delivery state and stop control
+.home-base-poller/
