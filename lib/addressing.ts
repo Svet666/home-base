@@ -20,6 +20,7 @@ export function mentionedHandles(body: string): string[] {
         if (char === quote) quote = null;
         continue;
       }
+      if (char === '"' && index > 0 && /[0-9]/.test(line[index - 1])) continue;
       if (char === '"' || char === "\x60") { quote = char; continue; }
       if (char === "“") { quote = "”"; continue; }
       if (char === "‘") { quote = "’"; continue; }
@@ -34,8 +35,6 @@ export function mentionedHandles(body: string): string[] {
       found.push(match[1].toLowerCase());
       index += match[0].length - 1;
     }
-    // Single quotes and inline code do not continue across prose lines.
-    if (quote === "'" || quote === "\x60") quote = null;
   }
   return [...new Set(found)];
 }

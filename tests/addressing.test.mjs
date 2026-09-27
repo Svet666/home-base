@@ -40,8 +40,11 @@ test("unknown names fail rather than silently become room discussion", () => {
   assert.throws(() => resolveRecipients("Please ask @Unknown", roster, "a"), /Unknown handle/);
 });
 
-test("a quote spanning lines does not address anyone inside it", () => {
+test("inch marks do not open quotes and real quotes span lines", () => {
+  assert.deepEqual(mentionedHandles('Box is 5" wide\n@Wren look'), ["wren"]);
   assert.deepEqual(mentionedHandles('She wrote "@Wren\nand @Lana" before asking @Claire.'), ["claire"]);
+  assert.deepEqual(mentionedHandles('She wrote “@Wren\nand @Lana” before asking @Claire.'), ["claire"]);
+  assert.deepEqual(mentionedHandles("She wrote '@Wren\nand @Lana' before asking @Claire."), ["claire"]);
 });
 
 test("curly quotes, tilde fences, and footmarks do not misroute", () => {
