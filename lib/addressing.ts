@@ -34,8 +34,8 @@ export function mentionedHandles(body: string): string[] {
       found.push(match[1].toLowerCase());
       index += match[0].length - 1;
     }
-    // Single quotes and inline code do not continue across prose lines.
-    if (quote === "'" || quote === "\x60") quote = null;
+    // Chat lines stand alone: an unclosed quote cannot hide a tag on the next line.
+    quote = null;
   }
   return [...new Set(found)];
 }
