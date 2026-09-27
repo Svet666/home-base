@@ -74,7 +74,7 @@ function recordFor(message, inbox, root, now, turnCap) {
   }
 
   return {
-    id, root_id: root, reply_to: parent, body: message.body,
+    id, delivery_order: String(message.delivery_order ?? ""), root_id: root, reply_to: parent, body: message.body,
     sender: message.agent?.handle ?? message.agent?.slug ?? null,
     addressing: message.addressing, auth_method: message.auth_method,
     context_preference: message.context_preference ?? null,

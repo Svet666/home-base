@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test tests/addressing.test.mjs tests/poller.test.mjs",
+    "test": "node --experimental-strip-types --test tests/addressing.test.mjs tests/poller.test.mjs tests/launch.test.mjs",
     "test:api": "node tests/api.integration.mjs",
     "test:mcp": "node mcp/smoke.test.mjs"
   },
