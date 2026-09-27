@@ -11,6 +11,8 @@
 //     duplicate, so a link preview or prefetch cannot double-post;
 //   - Lana revokes it with one UPDATE, without touching the agent's token.
 import { NextRequest, NextResponse } from "next/server";
+import { createHash } from "node:crypto";
+import { resolveRecipients, type RosterEntry } from "@/lib/addressing";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +24,7 @@ function config() {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) throw new Error("Home Base is not connected to its database yet.");
+  if (key.startsWith("sb_publishable_")) throw new Error("Home Base needs a server-side Supabase secret key.");
   const headers: Record<string, string> = { apikey: key };
   if (key.startsWith("eyJ")) headers.authorization = `Bearer ${key}`;
   return { url, headers };
@@ -66,31 +69,98 @@ export async function GET(request: NextRequest, context: { params: Promise<{ sec
       );
     }
     if (message.length > 2000) return page("Too long", "Messages are limited to 2,000 characters.", 400);
+    const replyTo = request.nextUrl.searchParams.get("reply_to")?.trim() || null;
+    const contextPreference = request.nextUrl.searchParams.get("context_preference");
+    const expiryInput = request.nextUrl.searchParams.get("expires_at");
+    const requestId = request.nextUrl.searchParams.get("client_request_id");
+    if (requestId && !/^[A-Za-z0-9._:-]{8,100}$/.test(requestId)) {
+      return page("Not posted", "Invalid retry identifier.", 400);
+    }
+    const requestHash = createHash("sha256")
+      .update(JSON.stringify(["posting_link", message, replyTo, contextPreference, expiryInput]))
+      .digest("hex");
+    let retryQuery: URLSearchParams | null = null;
+    if (requestId && request.nextUrl.searchParams.get("preview") !== "1") {
+      retryQuery = new URLSearchParams({
+        agent_id: `eq.${agent.id}`, client_request_id: `eq.${requestId}`,
+        select: "id,request_payload_hash,auth_method", limit: "1",
+      });
+      const saved = await fetch(`${url}/rest/v1/messages?${retryQuery}`, { headers, cache: "no-store" });
+      if (!saved.ok) throw new Error("The saved message could not be checked.");
+      const previous = (await saved.json())[0];
+      if (previous) return previous.request_payload_hash === requestHash && previous.auth_method === "posting_link"
+        ? page("Already posted", `Message #${previous.id} is already in the room.`, 200)
+        : page("Not posted", "That retry identifier was used for a different message.", 409);
+    }
+    const rosterResponse = await fetch(url + "/rest/v1/agents?active=is.true&select=id,slug,handle,display_name", {
+      headers, cache: "no-store",
+    });
+    if (!rosterResponse.ok) throw new Error("The room roster could not be read.");
+    const roster: RosterEntry[] = await rosterResponse.json();
+    if (replyTo) {
+      if (!/^[1-9][0-9]*$/.test(replyTo)) return page("Not posted", "Invalid reply reference.", 400);
+      const parentQuery = new URLSearchParams({ id: `eq.${replyTo}`, select: "id", limit: "1" });
+      const parentResponse = await fetch(`${url}/rest/v1/messages?${parentQuery}`, { headers, cache: "no-store" });
+      if (!parentResponse.ok) throw new Error("The reply reference could not be checked.");
+      if (!(await parentResponse.json())[0]) return page("Not posted", "The reply reference does not exist.", 400);
+    }
+    let addressed;
+    try {
+      addressed = resolveRecipients(message, roster, agent.id);
+    } catch {
+      return page("Not posted", "The message has an unknown or invalid recipient handle.", 400);
+    }
+    const recipientLabel = addressed.addressing === "everyone" ? "@everyone"
+      : addressed.recipients.map((recipient) => `@${recipient.handle}`).join(", ") || "the room";
+    if (request.nextUrl.searchParams.get("preview") === "1") {
+      return page("Ready to post", `Recipients: ${recipientLabel}. Remove preview=1 to post.`, 200);
+    }
+    if (contextPreference && !["fresh", "continue"].includes(contextPreference)) {
+      return page("Not posted", "Invalid context preference.", 400);
+    }
+    const expiry = expiryInput ? new Date(expiryInput) : null;
+    if (expiry && (Number.isNaN(expiry.getTime()) || expiry.getTime() <= Date.now())) {
+      return page("Not posted", "Invalid expiry.", 400);
+    }
 
-    const since = new Date(Date.now() - RATE_WINDOW_MS).toISOString();
-    const recentQuery = `/rest/v1/messages?agent_id=eq.${agent.id}&created_at=gt.${encodeURIComponent(since)}&select=body,created_at&order=created_at.desc&limit=${RATE_LIMIT}`;
+    const since = new Date(Date.now() - DUPLICATE_WINDOW_MS).toISOString();
+    const recentQuery = `/rest/v1/messages?agent_id=eq.${agent.id}&created_at=gt.${encodeURIComponent(since)}&select=request_payload_hash,created_at&order=created_at.desc&limit=100`;
     const recentResponse = await fetch(url + recentQuery, { headers, cache: "no-store" });
     const recent = recentResponse.ok ? await recentResponse.json() : [];
 
-    if (recent.length >= RATE_LIMIT) {
+    if (recent.filter((item: { created_at: string }) => new Date(item.created_at).getTime() > Date.now() - RATE_WINDOW_MS).length >= RATE_LIMIT) {
       return page("Slow down", `${agent.display_name} has posted enough for one minute. Try again shortly.`, 429);
     }
 
     const duplicateCutoff = Date.now() - DUPLICATE_WINDOW_MS;
     const isDuplicate = recent.some(
-      (item: { body: string; created_at: string }) =>
-        item.body === message && new Date(item.created_at).getTime() > duplicateCutoff,
+      (item: { request_payload_hash: string | null; created_at: string }) =>
+        item.request_payload_hash === requestHash && new Date(item.created_at).getTime() > duplicateCutoff,
     );
-    if (isDuplicate) return page("Already posted", "That exact message is already in the room.", 200);
+    if (isDuplicate && !requestId) return page("Already posted", "That exact message is already in the room.", 200);
 
     const insertResponse = await fetch(url + "/rest/v1/messages", {
       method: "POST",
       headers: { ...headers, "content-type": "application/json", prefer: "return=minimal" },
-      body: JSON.stringify({ agent_id: agent.id, body: message }),
+      body: JSON.stringify({
+        agent_id: agent.id, body: message, recipients: addressed.recipients,
+        addressing: addressed.addressing, reply_to: replyTo,
+        context_preference: contextPreference, expires_at: expiry?.toISOString() ?? null,
+        client_request_id: requestId, request_payload_hash: requestHash,
+        auth_method: "posting_link",
+      }),
     });
+    if (insertResponse.status === 409 && requestId) {
+      const saved = await fetch(`${url}/rest/v1/messages?${retryQuery}`, { headers, cache: "no-store" });
+      if (!saved.ok) throw new Error("The saved message could not be checked.");
+      const previous = (await saved.json())[0];
+      return previous?.request_payload_hash === requestHash && previous?.auth_method === "posting_link"
+        ? page("Already posted", `Message #${previous.id} is already in the room.`, 200)
+        : page("Not posted", "That retry identifier was used for a different message.", 409);
+    }
     if (!insertResponse.ok) throw new Error("The message could not be saved.");
 
-    return page("Posted", `Your message is in the room as ${agent.display_name}.`, 201);
+    return page("Posted", `Your message is in the room as ${agent.display_name}. Recipients: ${recipientLabel}.`, 201);
   } catch (caught) {
     return page("Not posted", caught instanceof Error ? caught.message : "Something went wrong.", 500);
   }
