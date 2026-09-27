@@ -1,12 +1,12 @@
 import { spawn } from "node:child_process";
 import { mkdir, open, unlink } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, win32 } from "node:path";
 import { readState, writeState, MIN_INTERVAL_MS } from "./poller.mjs";
 
 export const MAX_WINDOW_MS = 4 * 60 * 60 * 1000;
 export const MAX_BACKOFF_MS = 5 * 60 * 1000;
 
-export async function withStateLock(statePath, run) {
+export async function withStateLock(statePath, run, signalSource = process) {
   const lockPath = statePath + ".lock";
   await mkdir(dirname(statePath), { recursive: true });
   let handle;
@@ -16,12 +16,19 @@ export async function withStateLock(statePath, run) {
     if (error.code === "EEXIST") throw new Error("Poller state is already in use; check the running process before removing its lock.");
     throw error;
   }
+  const controller = new AbortController();
+  const interrupt = () => { signalSource.exitCode = 130; controller.abort(); };
+  const terminate = () => { signalSource.exitCode = 143; controller.abort(); };
+  signalSource.on("SIGINT", interrupt);
+  signalSource.on("SIGTERM", terminate);
   try {
     await handle.writeFile(String(process.pid));
-    return await run();
+    return await run(controller.signal);
   } finally {
     await handle.close();
     await unlink(lockPath);
+    signalSource.off("SIGINT", interrupt);
+    signalSource.off("SIGTERM", terminate);
   }
 }
 
@@ -83,7 +90,8 @@ export async function drainLaunchQueue({ statePath, until, launcher, isStopped =
       record.timed_out = Boolean(result.timedOut);
       record.status = result.exitCode === 0 && !result.timedOut ? "completed" : "failed";
       if (record.status === "failed") record.failure_reason = result.timedOut ? "worker_timeout" : "worker_exit";
-    } catch {
+    } catch (error) {
+      if (error.name === "AbortError") return { launched, stopped: true };
       record.exit_code = null;
       record.status = "failed";
       record.failure_reason = "launch_error";
@@ -127,7 +135,24 @@ export async function runWithBackoff({ tick, isStopped, sleep, intervalMs = 30_0
 }
 
 export function codexExecArgs(workspace) {
-  return ["exec", "--sandbox", "workspace-write", "-C", workspace, "-"];
+  return ["exec", "--sandbox", "workspace-write", "-c",
+    'mcp_servers.home-base.default_tools_approval_mode="approve"', "-C", workspace, "-"];
+}
+
+export function resolveCodexCommand({ env = process.env, nodeExec = process.execPath,
+  platform = process.platform } = {}) {
+  if (env.HOME_BASE_CODEX_BIN) {
+    if (platform === "win32" && /\.(cmd|bat)$/i.test(env.HOME_BASE_CODEX_BIN)) {
+      throw new Error("HOME_BASE_CODEX_BIN must name an executable, not a command shim.");
+    }
+    return { command: env.HOME_BASE_CODEX_BIN, prefix: [] };
+  }
+  if (platform === "win32") {
+    if (!env.APPDATA) throw new Error("APPDATA is required to find the Codex npm package.");
+    return { command: nodeExec, prefix: [win32.join(env.APPDATA, "npm", "node_modules",
+      "@openai", "codex", "bin", "codex.js")] };
+  }
+  return { command: "codex", prefix: [] };
 }
 
 export function codexPrompt(record) {
@@ -137,20 +162,31 @@ export function codexPrompt(record) {
     "Reply using the Home Base post_message tool with reply_to " + record.id + " and an explicit recipient tag.";
 }
 
-export function launchCodex(record, timeoutMs, workspace, spawnImpl = spawn) {
+export function launchCodex(record, timeoutMs, workspace, { spawnImpl = spawn, env = process.env,
+  nodeExec = process.execPath, platform = process.platform, signal = null } = {}) {
   return new Promise((resolve, reject) => {
-    const binary = process.platform === "win32" ? "codex.exe" : "codex";
-    const child = spawnImpl(binary, codexExecArgs(workspace), {
-      cwd: workspace, env: process.env, stdio: ["pipe", "inherit", "inherit"],
+    if (signal?.aborted) {
+      reject(Object.assign(new Error("Codex launch interrupted."), { name: "AbortError" }));
+      return;
+    }
+    const { command, prefix } = resolveCodexCommand({ env, nodeExec, platform });
+    const child = spawnImpl(command, [...prefix, ...codexExecArgs(workspace)], {
+      cwd: workspace, env, stdio: ["pipe", "inherit", "inherit"],
       shell: false, windowsHide: true,
     });
     let timedOut = false;
+    let interrupted = false;
+    const abort = () => { interrupted = true; child.kill(); };
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) abort();
+    const cleanup = () => { clearTimeout(timer); signal?.removeEventListener("abort", abort); };
     child.stdin.on("error", () => {});
     const timer = setTimeout(() => { timedOut = true; child.kill(); }, timeoutMs);
-    child.once("error", (error) => { clearTimeout(timer); reject(error); });
+    child.once("error", (error) => { cleanup(); reject(error); });
     child.once("close", (code) => {
-      clearTimeout(timer);
-      resolve({ exitCode: code, timedOut });
+      cleanup();
+      if (interrupted) reject(Object.assign(new Error("Codex launch interrupted."), { name: "AbortError" }));
+      else resolve({ exitCode: code, timedOut });
     });
     child.stdin.end(codexPrompt(record));
   });

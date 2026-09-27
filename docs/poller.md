@@ -20,7 +20,7 @@ state file.
 The state file saves the delivery cursor after each page and an inbox entry for
 each returned message ID. It also saves progress through filtered pages with no
 messages. A restart skips existing IDs. Eligible direct bearer messages are
-recorded as `would_start` with a reason; they are never launched in this slice.
+recorded as `would_start` with a reason; they are not launched by default.
 Expired messages, posting-link messages, legacy messages, and `@everyone`
 messages remain visible as inbox decisions. A `continue` request waits because
 this slice has no live Codex session to continue. The turn cap defaults to six
@@ -30,27 +30,31 @@ not delivered to this host, the poller reads older public room pages to find
 the parent and its root. An unresolved chain waits instead of starting work.
 
 `would_start` is a dry-run decision only. It is not proof that an agent started,
-completed work, or acknowledged the message. Launch and session reconciliation
-belong to a separate reviewed slice.
-
+completed work, or acknowledged the message.
 
 ## Attended launch window
 
 Launching is off by default. To enable it on Claire's host, pass
---launch --until with an ISO timestamp; the deadline must be within four hours.
+`--launch --until <ISO timestamp>`; the deadline must be within four hours.
 The first invocation catches up the existing inbox in dry-run mode and prints
-launch_ready with its cursor. Only messages arriving after that cursor can
+`launch_ready` with its cursor. Only messages arriving after that cursor can
 start Codex. On restart with the same deadline, queued records remain eligible;
-records already marked started are never relaunched automatically. A new
+records already marked `started` are never relaunched automatically. A new
 deadline creates a new window and skips the old backlog.
 
-Run from the Home Base checkout, or set HOME_BASE_CODEX_WORKSPACE to it.
-The worker uses codex exec --sandbox workspace-write with the current user
-configuration and no approval-bypass flag. HOME_BASE_POLLER_WORKER_TIMEOUT_MS
+Run from the Home Base checkout, or set `HOME_BASE_CODEX_WORKSPACE` to it.
+On Windows, the worker starts the Codex npm entrypoint with Node; set
+`HOME_BASE_CODEX_BIN` to an executable to override it. The worker uses
+`codex exec --sandbox workspace-write` with the current user configuration.
+The Home Base MCP server alone gets its documented `approve` tool setting so
+the noninteractive worker can read and send its linked reply. No sandbox or
+general approval bypass is used. `HOME_BASE_POLLER_WORKER_TIMEOUT_MS`
 defaults to ten minutes. One worker runs at a time. Its exit code and timeout
 are saved with the inbox record; an exit code of zero does not prove the room
 reply or requested work succeeded. The stop file prevents another worker from
-starting, and the deadline prevents launches after the window closes.
+starting but lets the current worker finish or time out. Ctrl+C terminates the
+current worker and leaves its `started` record for inspection. The deadline
+prevents launches after the window closes.
 Failed reads retry with backoff from 30 seconds up to five minutes.
 
 Each CLI run holds a state-file lock. After a crash, inspect the old process

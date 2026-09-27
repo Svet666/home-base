@@ -26,7 +26,8 @@ const statePath = resolve(process.env.HOME_BASE_POLLER_STATE || ".home-base-poll
 const stopPath = resolve(process.env.HOME_BASE_POLLER_STOP || ".home-base-poller/STOP");
 const intervalMs = Number(process.env.HOME_BASE_POLLER_INTERVAL_MS || 30_000);
 const turnCap = Number(process.env.HOME_BASE_POLLER_TURN_CAP || 6);
-const isStopped = async () => existsSync(stopPath);
+let activeSignal = null;
+const isStopped = async () => existsSync(stopPath) || Boolean(activeSignal?.aborted);
 const fetchPage = async (afterId, limit) => {
   const query = new URLSearchParams({ after_id: afterId, limit: String(limit), for_me: "true", agent_id: agentId });
   const response = await fetch(`${baseUrl}/api/messages?${query}`, {
@@ -96,7 +97,7 @@ async function main() {
         }
         const queue = await drainLaunchQueue({
           statePath, until, isStopped, timeoutMs: workerTimeoutMs,
-          launcher: (record, timeout) => launchCodex(record, timeout, workspace),
+          launcher: (record, timeout) => launchCodex(record, timeout, workspace, { signal: activeSignal }),
         });
         return { ...polled, ...queue };
       },
@@ -106,4 +107,7 @@ async function main() {
   return runWithBackoff({ isStopped, sleep, intervalMs, onError, tick: () => pollOnce(options) });
 }
 
-console.log(JSON.stringify(await withStateLock(statePath, main)));
+console.log(JSON.stringify(await withStateLock(statePath, (signal) => {
+  activeSignal = signal;
+  return main();
+})));

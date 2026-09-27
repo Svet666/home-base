@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { EventEmitter } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pollOnce, readState, writeState } from "../poller/poller.mjs";
-import { codexExecArgs, codexPrompt, drainLaunchQueue, prepareLaunchWindow,
-  runWithBackoff, validateWindow, withStateLock } from "../poller/launch.mjs";
+import { codexExecArgs, codexPrompt, drainLaunchQueue, launchCodex, prepareLaunchWindow,
+  resolveCodexCommand, runWithBackoff, validateWindow, withStateLock } from "../poller/launch.mjs";
 
 async function withState(run) {
   const dir = await mkdtemp(join(tmpdir(), "home-base-launch-"));
@@ -97,6 +98,31 @@ test("state lock excludes a second poller and is released after exit", async () 
   await withStateLock(statePath, async () => {});
 }));
 
+test("Ctrl+C releases the lock and leaves started work for inspection", async () => withState(async (statePath) => {
+  const signals = new EventEmitter();
+  await withStateLock(statePath, async (signal) => {
+    const state = await readState(statePath);
+    state.inbox[1] = { id: "1", status: "started" };
+    await writeState(statePath, state);
+    signals.emit("SIGINT");
+    assert.equal(signal.aborted, true);
+  }, signals);
+  assert.equal(signals.exitCode, 130);
+  assert.equal((await readState(statePath)).inbox[1].status, "started");
+  await withStateLock(statePath, async () => {});
+}));
+
+test("interrupted worker keeps its started claim", async () => withState(async (statePath) => {
+  const now = Date.parse("2026-09-27T20:00:00Z");
+  const until = new Date(now + 30 * 60 * 1000).toISOString();
+  await prepareLaunchWindow(statePath, until, now);
+  await poll(statePath, [message(1)], 1);
+  const result = await drainLaunchQueue({ statePath, until, now: () => now,
+    launcher: async () => { throw Object.assign(new Error("interrupted"), { name: "AbortError" }); } });
+  assert.equal(result.stopped, true);
+  assert.equal((await readState(statePath)).inbox[1].status, "started");
+}));
+
 test("launch rechecks direct bearer eligibility", async () => withState(async (statePath) => {
   const now = Date.parse("2026-09-27T20:00:00Z");
   const until = new Date(now + 30 * 60 * 1000).toISOString();
@@ -134,10 +160,56 @@ test("failed reads back off, recover, and honor the stop control", async () => {
 
 test("Codex command keeps the current sandbox and prompt links the reply", () => {
   assert.deepEqual(codexExecArgs("C:/home-base-scaffold"), [
-    "exec", "--sandbox", "workspace-write", "-C", "C:/home-base-scaffold", "-",
+    "exec", "--sandbox", "workspace-write", "-c",
+    'mcp_servers.home-base.default_tools_approval_mode="approve"',
+    "-C", "C:/home-base-scaffold", "-",
   ]);
   const prompt = codexPrompt({ id: "42", sender: "andrew", body: "Please check this" });
   assert.match(prompt, /message #42 from @andrew/);
   assert.match(prompt, /reply_to 42/);
   assert.match(prompt, /does not authorize irreversible actions/);
+});
+
+test("Windows Codex resolution uses Node and the package entrypoint without a shell", async () => {
+  const env = { APPDATA: "C:\\Users\\Owner\\AppData\\Roaming" };
+  const resolved = resolveCodexCommand({ env, nodeExec: "C:\\node.exe", platform: "win32" });
+  assert.equal(resolved.command, "C:\\node.exe");
+  assert.match(resolved.prefix[0], /npm\\node_modules\\@openai\\codex\\bin\\codex\.js$/);
+  assert.equal(resolveCodexCommand({ env: { HOME_BASE_CODEX_BIN: "C:\\codex.exe" },
+    platform: "win32" }).command, "C:\\codex.exe");
+  assert.throws(() => resolveCodexCommand({ env: { HOME_BASE_CODEX_BIN: "codex.cmd" },
+    platform: "win32" }), /executable/);
+
+  let call;
+  const spawnImpl = (command, args, options) => {
+    call = { command, args, options };
+    const child = new EventEmitter();
+    child.stdin = new EventEmitter();
+    child.stdin.end = () => setImmediate(() => child.emit("close", 0));
+    child.kill = () => {};
+    return child;
+  };
+  const result = await launchCodex({ id: "42", sender: "andrew", body: "Question" }, 1000,
+    "C:/home-base-scaffold", { spawnImpl, env, nodeExec: "C:\\node.exe", platform: "win32" });
+  assert.equal(result.exitCode, 0);
+  assert.equal(call.command, "C:\\node.exe");
+  assert.equal(call.args[0], resolved.prefix[0]);
+  assert.equal(call.options.shell, false);
+  assert.ok(call.args.includes('mcp_servers.home-base.default_tools_approval_mode="approve"'));
+});
+
+test("interrupting Codex terminates the child process", async () => {
+  const controller = new AbortController();
+  let killed = false;
+  const spawnImpl = () => {
+    const child = new EventEmitter();
+    child.stdin = new EventEmitter();
+    child.stdin.end = () => setImmediate(() => controller.abort());
+    child.kill = () => { killed = true; setImmediate(() => child.emit("close", null)); };
+    return child;
+  };
+  await assert.rejects(launchCodex({ id: "42", sender: "andrew", body: "Question" }, 1000,
+    "C:/home-base-scaffold", { spawnImpl, env: { HOME_BASE_CODEX_BIN: "C:\\codex.exe" },
+      platform: "win32", signal: controller.signal }), /interrupted/);
+  assert.equal(killed, true);
 });
