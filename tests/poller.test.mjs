@@ -13,7 +13,7 @@ async function withState(run) {
 
 function message(id, overrides = {}) {
   return {
-    id, body: `Message ${id}`, addressing: "direct", auth_method: "bearer",
+    id, delivery_order: id, body: `Message ${id}`, addressing: "direct", auth_method: "bearer",
     reply_to: null, context_preference: null, expires_at: null,
     agent: { handle: "lana" }, ...overrides,
   };
@@ -95,6 +95,38 @@ test("reply chain stops at its turn cap and survives restart", async () => withS
   assert.equal(inbox[3].decision, "wait");
   assert.equal(inbox[3].reason, "reply_loop_cap");
   assert.equal(inbox[3].root_id, "1");
+}));
+
+test("alternating senders share one reply root even when own posts are absent from inbox", async () => withState(async (statePath) => {
+  const ownPosts = new Map([
+    ["2", message(2, { reply_to: 1, agent: { handle: "claire" } })],
+    ["4", message(4, { reply_to: 3, agent: { handle: "claire" } })],
+  ]);
+  const lookedUp = [];
+  const fetchParent = async (id) => { lookedUp.push(id); return ownPosts.get(id) ?? null; };
+  await pollOnce({ statePath, turnCap: 2, fetchParent, fetchPage: async () => ({
+    messages: [message(1)], next_cursor: "1", has_more: false,
+  }) });
+  await pollOnce({ statePath, turnCap: 2, fetchParent, fetchPage: async () => ({
+    messages: [message(3, { reply_to: 2 })], next_cursor: "3", has_more: false,
+  }) });
+  await pollOnce({ statePath, turnCap: 2, fetchParent, fetchPage: async () => ({
+    messages: [message(5, { reply_to: 4 })], next_cursor: "5", has_more: false,
+  }) });
+  const { inbox } = await readState(statePath);
+  assert.deepEqual(lookedUp, ["2", "4"]);
+  assert.equal(inbox[3].root_id, "1");
+  assert.equal(inbox[5].root_id, "1");
+  assert.equal(inbox[5].reason, "reply_loop_cap");
+}));
+
+test("an unknown reply parent waits rather than starting a fresh chain", async () => withState(async (statePath) => {
+  await pollOnce({ statePath, fetchPage: async () => ({
+    messages: [message(3, { reply_to: 2 })], next_cursor: "3", has_more: false,
+  }) });
+  const { inbox } = await readState(statePath);
+  assert.equal(inbox[3].root_id, null);
+  assert.equal(inbox[3].reason, "unresolved_reply_chain");
 }));
 
 test("continuous mode enforces the minimum interval", async () => withState(async (statePath) => {

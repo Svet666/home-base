@@ -25,10 +25,25 @@ export async function writeState(path, state) {
   await rename(temp, path);
 }
 
-function recordFor(message, inbox, now, turnCap) {
+async function replyRoot(message, inbox, fetchParent) {
+  const id = String(message.id);
+  const seen = new Set([id]);
+  let current = message;
+  while (current.reply_to != null) {
+    const parentId = String(current.reply_to);
+    if (!/^[1-9][0-9]*$/.test(parentId) || seen.has(parentId)) return null;
+    seen.add(parentId);
+    if (inbox[parentId]) return inbox[parentId].root_id;
+    const parent = await fetchParent(parentId, current);
+    if (!parent || String(parent.id) !== parentId) return null;
+    current = parent;
+  }
+  return String(current.id);
+}
+
+function recordFor(message, inbox, root, now, turnCap) {
   const id = String(message.id);
   const parent = message.reply_to == null ? null : String(message.reply_to);
-  const root = parent ? (inbox[parent]?.root_id ?? parent) : id;
   const expiry = message.expires_at ? Date.parse(message.expires_at) : null;
   let decision = "inbox_only";
   let reason = "not_direct_bearer";
@@ -39,6 +54,9 @@ function recordFor(message, inbox, now, turnCap) {
       decision = "expired";
       reason = "expiry_passed";
       status = "expired";
+    } else if (root === null) {
+      decision = "wait";
+      reason = "unresolved_reply_chain";
     } else if (message.context_preference === "continue") {
       decision = "wait";
       reason = "no_live_session";
@@ -65,7 +83,7 @@ function recordFor(message, inbox, now, turnCap) {
   };
 }
 
-export async function pollOnce({ fetchPage, statePath, agentId, isStopped = async () => false,
+export async function pollOnce({ fetchPage, fetchParent = async () => null, statePath, agentId, isStopped = async () => false,
   now = () => Date.now(), pageSize = 30, turnCap = 6 }) {
   if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) throw new Error("Page size must be 1-100.");
   if (!Number.isInteger(turnCap) || turnCap < 1) throw new Error("Turn cap must be positive.");
@@ -92,7 +110,9 @@ export async function pollOnce({ fetchPage, statePath, agentId, isStopped = asyn
       const id = String(message.id);
       if (!/^[1-9][0-9]*$/.test(id)) throw new Error("Invalid message ID; cursor was not saved.");
       if (state.inbox[id]) continue;
-      state.inbox[id] = recordFor(message, state.inbox, now(), turnCap);
+      const root = await replyRoot(message, state.inbox, fetchParent);
+      if (await isStopped()) return { stopped: true, pages, recorded, cursor: state.cursor };
+      state.inbox[id] = recordFor(message, state.inbox, root, now(), turnCap);
       recorded++;
     }
     state.cursor = next;

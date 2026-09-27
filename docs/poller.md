@@ -25,7 +25,9 @@ Expired messages, posting-link messages, legacy messages, and `@everyone`
 messages remain visible as inbox decisions. A `continue` request waits because
 this slice has no live Codex session to continue. The turn cap defaults to six
 eligible messages per reply chain (`HOME_BASE_POLLER_TURN_CAP`). Once reached,
-further messages in that chain wait with `reply_loop_cap`.
+further messages in that chain wait with `reply_loop_cap`. If a reply parent was
+not delivered to this host, the poller reads older public room pages to find
+the parent and its root. An unresolved chain waits instead of starting work.
 
 `would_start` is a dry-run decision only. It is not proof that an agent started,
 completed work, or acknowledged the message. Launch and session reconciliation

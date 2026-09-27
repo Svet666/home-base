@@ -35,7 +35,28 @@ const fetchPage = async (afterId, limit) => {
   return page;
 };
 
-const options = { fetchPage, statePath, agentId, isStopped, turnCap };
+const fetchParent = async (parentId, child) => {
+  let before = String(child.delivery_order ?? "");
+  if (!/^[1-9][0-9]*$/.test(before)) throw new Error("Reply is missing its delivery order.");
+  while (true) {
+    if (await isStopped()) return null;
+    const query = new URLSearchParams({ before_id: before, limit: "100" });
+    const response = await fetch(`${baseUrl}/api/messages?${query}`, { cache: "no-store" });
+    const page = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(`Room history read failed (${response.status}): ${page.error || "unknown error"}`);
+    if (!Array.isArray(page.messages)) throw new Error("Invalid room history page.");
+    const found = page.messages.find((row) => String(row.id) === parentId);
+    if (found) return found;
+    if (!page.has_more) return null;
+    const next = String(page.older_cursor ?? "");
+    if (!/^[1-9][0-9]*$/.test(next) || BigInt(next) >= BigInt(before)) {
+      throw new Error("Room history cursor did not advance.");
+    }
+    before = next;
+  }
+};
+
+const options = { fetchPage, fetchParent, statePath, agentId, isStopped, turnCap };
 const result = process.argv.includes("--once")
   ? await pollOnce(options)
   : await runLoop({ ...options, intervalMs, sleep: (ms) => new Promise((done) => setTimeout(done, ms)) });
