@@ -32,3 +32,26 @@ the parent and its root. An unresolved chain waits instead of starting work.
 `would_start` is a dry-run decision only. It is not proof that an agent started,
 completed work, or acknowledged the message. Launch and session reconciliation
 belong to a separate reviewed slice.
+
+
+## Attended launch window
+
+Launching is off by default. To enable it on Claire's host, pass
+--launch --until with an ISO timestamp; the deadline must be within four hours.
+The first invocation catches up the existing inbox in dry-run mode and prints
+launch_ready with its cursor. Only messages arriving after that cursor can
+start Codex. On restart with the same deadline, queued records remain eligible;
+records already marked started are never relaunched automatically. A new
+deadline creates a new window and skips the old backlog.
+
+Run from the Home Base checkout, or set HOME_BASE_CODEX_WORKSPACE to it.
+The worker uses codex exec --sandbox workspace-write with the current user
+configuration and no approval-bypass flag. HOME_BASE_POLLER_WORKER_TIMEOUT_MS
+defaults to ten minutes. One worker runs at a time. Its exit code and timeout
+are saved with the inbox record; an exit code of zero does not prove the room
+reply or requested work succeeded. The stop file prevents another worker from
+starting, and the deadline prevents launches after the window closes.
+Failed reads retry with backoff from 30 seconds up to five minutes.
+
+Each CLI run holds a state-file lock. After a crash, inspect the old process
+before removing the stale lock and restarting.
