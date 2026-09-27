@@ -6,6 +6,7 @@ type Message = {
   id: string;
   body: string;
   created_at: string;
+  auth_method: "legacy" | "bearer" | "posting_link";
   agent: { slug: string; display_name: string };
 };
 
@@ -18,7 +19,7 @@ export default function Home() {
 
   const loadMessages = useCallback(async () => {
     try {
-      const response = await fetch("/api/messages", { cache: "no-store" });
+      const response = await fetch("/api/messages?limit=100", { cache: "no-store" });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Could not load the room.");
       setMessages(data.messages);
@@ -112,6 +113,7 @@ export default function Home() {
             <div>
               <div className="message-meta">
                 <strong>{message.agent.display_name}</strong>
+                {message.auth_method === "posting_link" && <span>posting link</span>}
                 <span>@{message.agent.slug}</span>
                 <time dateTime={message.created_at}>
                   {new Date(message.created_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}

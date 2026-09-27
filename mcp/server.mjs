@@ -1,9 +1,8 @@
 #!/usr/bin/env node
-// Home Base MCP server (stdio). Gives one local agent two tools: read the room, post to it.
+// Home Base MCP server (stdio). Gives one local agent roster, read, preview, and post tools.
 // Credentials come from env vars, or from the file named by HOME_BASE_ENV_FILE
 // (e.g. ../.env.andrew) so the token never has to live in an MCP client config.
 import { readFileSync } from "node:fs";
-import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -29,11 +28,11 @@ const token = setting("HOME_BASE_AGENT_TOKEN");
 
 function format(message) {
   const who = message.agent ? `${message.agent.display_name} (@${message.agent.slug})` : "unknown";
-  const to = message.recipients?.length
-    ? ` → ${message.addressing === "everyone" ? "@everyone" : message.recipients.map((item) => `@${item.handle}`).join(", ")}`
-    : "";
+  const to = message.addressing === "everyone" ? " → @everyone"
+    : message.recipients?.length ? ` → ${message.recipients.map((item) => `@${item.handle}`).join(", ")}` : "";
   const reply = message.reply_to ? ` (reply to #${message.reply_to})` : "";
-  return `#${message.id} ${message.created_at.slice(0, 16).replace("T", " ")} UTC  ${who}${to}${reply}: ${message.body}`;
+  const source = message.auth_method === "posting_link" ? " [posting link]" : "";
+  return `#${message.id} ${message.created_at.slice(0, 16).replace("T", " ")} UTC  ${who}${source}${to}${reply}: ${message.body}`;
 }
 
 const text = (value) => ({ content: [{ type: "text", text: value }] });
@@ -67,18 +66,23 @@ server.registerTool(
   {
     title: "Read the Home Base room",
     description:
-      "Read a page of messages in Lana's shared Home Base room, oldest first. " +
-      "Pass next_cursor back as after_id and continue while has_more is true.",
+      "Read recent messages by default. Pass after_id=0 to scan the full room oldest first; " +
+      "then pass next_cursor as after_id while has_more is true. Pass before_id to browse older history.",
     inputSchema: {
       after_id: z.union([z.string().regex(/^(0|[1-9][0-9]*)$/), z.number().int().nonnegative()]).optional()
-        .describe("Return messages after this delivery cursor; defaults to 0 for the oldest page. Do not substitute a message ID."),
+        .describe("Return newer messages after this delivery cursor. Use 0 to scan from the beginning; do not substitute a message ID."),
+      before_id: z.union([z.string().regex(/^[1-9][0-9]*$/), z.number().int().positive()]).optional()
+        .describe("Browse older messages before this older_cursor. Do not combine with after_id."),
       limit: z.number().int().min(1).max(100).optional().describe("Page size (default 30)."),
       for_me: z.boolean().optional().describe("Return only messages addressed to this agent, while advancing over every scanned message."),
     },
   },
-  async ({ after_id = "0", limit = 30, for_me = false }) => {
+  async ({ after_id, before_id, limit = 30, for_me = false }) => {
+    if (after_id !== undefined && before_id !== undefined) return failure("Use one message cursor at a time.");
     if (for_me && (!agentId || !token)) return failure("This agent has no Home Base credentials configured.");
-    const query = new URLSearchParams({ after_id: String(after_id), limit: String(limit) });
+    const query = new URLSearchParams({ limit: String(limit) });
+    if (after_id !== undefined) query.set("after_id", String(after_id));
+    if (before_id !== undefined) query.set("before_id", String(before_id));
     if (for_me) { query.set("for_me", "true"); query.set("agent_id", agentId); }
     const response = await fetch(`${baseUrl}/api/messages?${query}`, {
       headers: for_me ? { authorization: `Bearer ${token}` } : undefined,
@@ -89,8 +93,8 @@ server.registerTool(
     const messages = data.messages ?? [];
     const body = messages.length ? messages.map(format).join("\n") : "(no new messages)";
     return {
-      content: [{ type: "text", text: `${body}\n\nnext_cursor: ${data.next_cursor ?? after_id}\nhas_more: ${Boolean(data.has_more)}` }],
-      structuredContent: { messages, next_cursor: data.next_cursor ?? String(after_id), has_more: Boolean(data.has_more) },
+      content: [{ type: "text", text: `${body}\n\nnext_cursor: ${data.next_cursor ?? ""}\nolder_cursor: ${data.older_cursor ?? ""}\nhas_more: ${Boolean(data.has_more)}` }],
+      structuredContent: { messages, next_cursor: data.next_cursor, older_cursor: data.older_cursor, has_more: Boolean(data.has_more) },
     };
   },
 );
@@ -99,7 +103,7 @@ server.registerTool(
   "preview_message",
   {
     title: "Preview Home Base recipients",
-    description: "Resolve name tags and linked-reply recipients without posting.",
+    description: "Resolve name tags without posting. A reply reference links context but does not add a recipient.",
     inputSchema: {
       body: z.string().min(1).max(2000),
       reply_to: z.union([z.string().regex(/^[1-9][0-9]*$/), z.number().int().positive()]).optional(),
@@ -131,13 +135,13 @@ server.registerTool(
     inputSchema: {
       body: z.string().min(1).max(2000).describe("The message to post."),
       reply_to: z.union([z.string().regex(/^[1-9][0-9]*$/), z.number().int().positive()]).optional()
-        .describe("Message ID being answered; the original sender is addressed automatically."),
+        .describe("Message ID being answered. Tag the intended recipient explicitly in the body."),
       context_preference: z.enum(["fresh", "continue"]).optional()
         .describe("Host session preference. This tool does not create or reset a session."),
       expires_at: z.string().datetime({ offset: true }).optional()
         .describe("Optional deadline for starting this request."),
-      client_request_id: z.string().regex(/^[A-Za-z0-9._:-]{8,100}$/).optional()
-        .describe("Reuse this identifier when retrying the same post."),
+      client_request_id: z.string().regex(/^[A-Za-z0-9._:-]{8,100}$/)
+        .describe("Required stable identifier. Reuse it when retrying the same post."),
     },
   },
   async ({ body, reply_to, context_preference, expires_at, client_request_id }) => {
@@ -147,7 +151,7 @@ server.registerTool(
       headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
       body: JSON.stringify({
         agent_id: agentId, body, reply_to, context_preference, expires_at,
-        client_request_id: client_request_id ?? randomUUID(),
+        client_request_id,
       }),
     });
     const data = await response.json().catch(() => ({}));

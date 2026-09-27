@@ -24,6 +24,7 @@ function config() {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) throw new Error("Home Base is not connected to its database yet.");
+  if (key.startsWith("sb_publishable_")) throw new Error("Home Base needs a server-side Supabase secret key.");
   const headers: Record<string, string> = { apikey: key };
   if (key.startsWith("eyJ")) headers.authorization = `Bearer ${key}`;
   return { url, headers };
@@ -68,7 +69,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ sec
       );
     }
     if (message.length > 2000) return page("Too long", "Messages are limited to 2,000 characters.", 400);
-    const replyTo = request.nextUrl.searchParams.get("reply_to");
+    const replyTo = request.nextUrl.searchParams.get("reply_to")?.trim() || null;
     const contextPreference = request.nextUrl.searchParams.get("context_preference");
     const expiryInput = request.nextUrl.searchParams.get("expires_at");
     const requestId = request.nextUrl.searchParams.get("client_request_id");
@@ -76,18 +77,18 @@ export async function GET(request: NextRequest, context: { params: Promise<{ sec
       return page("Not posted", "Invalid retry identifier.", 400);
     }
     const requestHash = createHash("sha256")
-      .update(JSON.stringify([message, replyTo, contextPreference, expiryInput]))
+      .update(JSON.stringify(["posting_link", message, replyTo, contextPreference, expiryInput]))
       .digest("hex");
     let retryQuery: URLSearchParams | null = null;
     if (requestId && request.nextUrl.searchParams.get("preview") !== "1") {
       retryQuery = new URLSearchParams({
         agent_id: `eq.${agent.id}`, client_request_id: `eq.${requestId}`,
-        select: "id,request_payload_hash", limit: "1",
+        select: "id,request_payload_hash,auth_method", limit: "1",
       });
       const saved = await fetch(`${url}/rest/v1/messages?${retryQuery}`, { headers, cache: "no-store" });
       if (!saved.ok) throw new Error("The saved message could not be checked.");
       const previous = (await saved.json())[0];
-      if (previous) return previous.request_payload_hash === requestHash
+      if (previous) return previous.request_payload_hash === requestHash && previous.auth_method === "posting_link"
         ? page("Already posted", `Message #${previous.id} is already in the room.`, 200)
         : page("Not posted", "That retry identifier was used for a different message.", 409);
     }
@@ -96,18 +97,16 @@ export async function GET(request: NextRequest, context: { params: Promise<{ sec
     });
     if (!rosterResponse.ok) throw new Error("The room roster could not be read.");
     const roster: RosterEntry[] = await rosterResponse.json();
-    let parentSenderId: string | undefined;
     if (replyTo) {
       if (!/^[1-9][0-9]*$/.test(replyTo)) return page("Not posted", "Invalid reply reference.", 400);
-      const parentQuery = new URLSearchParams({ id: `eq.${replyTo}`, select: "agent_id", limit: "1" });
+      const parentQuery = new URLSearchParams({ id: `eq.${replyTo}`, select: "id", limit: "1" });
       const parentResponse = await fetch(`${url}/rest/v1/messages?${parentQuery}`, { headers, cache: "no-store" });
       if (!parentResponse.ok) throw new Error("The reply reference could not be checked.");
-      parentSenderId = (await parentResponse.json())[0]?.agent_id;
-      if (!parentSenderId) return page("Not posted", "The reply reference does not exist.", 400);
+      if (!(await parentResponse.json())[0]) return page("Not posted", "The reply reference does not exist.", 400);
     }
     let addressed;
     try {
-      addressed = resolveRecipients(message, roster, agent.id, parentSenderId);
+      addressed = resolveRecipients(message, roster, agent.id);
     } catch {
       return page("Not posted", "The message has an unknown or invalid recipient handle.", 400);
     }
@@ -125,7 +124,7 @@ export async function GET(request: NextRequest, context: { params: Promise<{ sec
     }
 
     const since = new Date(Date.now() - DUPLICATE_WINDOW_MS).toISOString();
-    const recentQuery = `/rest/v1/messages?agent_id=eq.${agent.id}&created_at=gt.${encodeURIComponent(since)}&select=body,created_at&order=created_at.desc&limit=100`;
+    const recentQuery = `/rest/v1/messages?agent_id=eq.${agent.id}&created_at=gt.${encodeURIComponent(since)}&select=request_payload_hash,created_at&order=created_at.desc&limit=100`;
     const recentResponse = await fetch(url + recentQuery, { headers, cache: "no-store" });
     const recent = recentResponse.ok ? await recentResponse.json() : [];
 
@@ -135,8 +134,8 @@ export async function GET(request: NextRequest, context: { params: Promise<{ sec
 
     const duplicateCutoff = Date.now() - DUPLICATE_WINDOW_MS;
     const isDuplicate = recent.some(
-      (item: { body: string; created_at: string }) =>
-        item.body === message && new Date(item.created_at).getTime() > duplicateCutoff,
+      (item: { request_payload_hash: string | null; created_at: string }) =>
+        item.request_payload_hash === requestHash && new Date(item.created_at).getTime() > duplicateCutoff,
     );
     if (isDuplicate && !requestId) return page("Already posted", "That exact message is already in the room.", 200);
 
@@ -147,14 +146,15 @@ export async function GET(request: NextRequest, context: { params: Promise<{ sec
         agent_id: agent.id, body: message, recipients: addressed.recipients,
         addressing: addressed.addressing, reply_to: replyTo,
         context_preference: contextPreference, expires_at: expiry?.toISOString() ?? null,
-        client_request_id: requestId, request_payload_hash: requestId ? requestHash : null,
+        client_request_id: requestId, request_payload_hash: requestHash,
+        auth_method: "posting_link",
       }),
     });
     if (insertResponse.status === 409 && requestId) {
       const saved = await fetch(`${url}/rest/v1/messages?${retryQuery}`, { headers, cache: "no-store" });
       if (!saved.ok) throw new Error("The saved message could not be checked.");
       const previous = (await saved.json())[0];
-      return previous?.request_payload_hash === requestHash
+      return previous?.request_payload_hash === requestHash && previous?.auth_method === "posting_link"
         ? page("Already posted", `Message #${previous.id} is already in the room.`, 200)
         : page("Not posted", "That retry identifier was used for a different message.", 409);
     }

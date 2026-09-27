@@ -15,7 +15,7 @@ const messages = Array.from({ length: 130 }, (_, index) => ({
   id: index + 1, delivery_order: index + 1, agent_id: "b", body: `History ${index + 1}`,
   created_at: "2026-09-26T12:00:00Z", recipients: [50, 110].includes(index + 1) ? [{ id: "a", handle: "claire" }] : [],
   addressing: [50, 110].includes(index + 1) ? "direct" : "none",
-  reply_to: null, context_preference: null, expires_at: null,
+  auth_method: "legacy", reply_to: null, context_preference: null, expires_at: null,
 }));
 
 async function listen(server) {
@@ -60,6 +60,7 @@ const supabase = createServer(async (request, response) => {
   if (query.has("delivery_order")) {
     const filter = query.get("delivery_order");
     if (filter.startsWith("gt.")) rows = rows.filter((item) => item.delivery_order > Number(filter.slice(3)));
+    if (filter.startsWith("lt.")) rows = rows.filter((item) => item.delivery_order < Number(filter.slice(3)));
   }
   if (query.has("agent_id")) rows = rows.filter((item) => item.agent_id === query.get("agent_id").slice(3));
   if (query.has("client_request_id")) rows = rows.filter((item) => item.client_request_id === query.get("client_request_id").slice(3));
@@ -104,6 +105,11 @@ try {
     if (!page.has_more) break;
   }
   assert.deepEqual(seen, Array.from({ length: 130 }, (_, index) => index + 1));
+  const latest = await (await fetch(`${base}/api/messages?limit=5`)).json();
+  assert.deepEqual(latest.messages.map((message) => message.id), [126, 127, 128, 129, 130]);
+  assert.equal(latest.has_more, true);
+  const older = await (await fetch(`${base}/api/messages?before_id=${latest.older_cursor}&limit=5`)).json();
+  assert.deepEqual(older.messages.map((message) => message.id), [121, 122, 123, 124, 125]);
 
   cursor = "0";
   const addressed = [];
@@ -137,6 +143,7 @@ try {
   assert.equal(first.status, 201);
   const created = await first.json();
   assert.deepEqual(created.recipients, [{ id: "b", handle: "wren" }]);
+  assert.equal(messages.at(-1).auth_method, "bearer");
   const retry = await post("claire-codex", "claire-token", "Can @WREN help?", "trial-request-1");
   assert.equal(retry.status, 200);
   assert.equal((await retry.json()).id, created.id);
@@ -144,9 +151,17 @@ try {
 
   const reply = await post("wren-actex", "wren-token", "I can help", "trial-request-2", { reply_to: created.id });
   assert.equal(reply.status, 201);
-  assert.deepEqual((await reply.json()).recipients, [{ id: "a", handle: "claire" }]);
+  assert.deepEqual((await reply.json()).recipients, []);
+  const taggedReply = await post("wren-actex", "wren-token", "I can help @Claire", "trial-request-2b", { reply_to: created.id });
+  assert.equal(taggedReply.status, 201);
+  assert.deepEqual((await taggedReply.json()).recipients, [{ id: "a", handle: "claire" }]);
   const everyone = await post("claire-codex", "claire-token", "News @everyone", "trial-request-3");
   assert.equal((await everyone.json()).addressing, "everyone");
+  assert.deepEqual(messages.at(-1).recipients, []);
+  const addressedEveryone = await (await fetch(`${base}/api/messages?after_id=130&for_me=true&agent_id=wren-actex`, {
+    headers: { authorization: "Bearer wren-token" },
+  })).json();
+  assert.ok(addressedEveryone.messages.some((message) => message.addressing === "everyone"));
   assert.equal((await post("claire-codex", "claire-token", "Ask @Missing", "trial-request-4")).status, 400);
 
   const link = `${base}/p/${"s".repeat(32)}?msg=${encodeURIComponent("Link asks @Wren")}&client_request_id=link-trial-1`;
@@ -157,10 +172,22 @@ try {
   assert.equal(messages.length, beforeLink);
   assert.equal((await fetch(link)).status, 201);
   assert.deepEqual(messages.at(-1).recipients, [{ id: "b", handle: "wren" }]);
+  assert.equal(messages.at(-1).auth_method, "posting_link");
+  const deliveredLink = await (await fetch(`${base}/api/messages?after_id=${beforeLink}&for_me=true&agent_id=wren-actex`, {
+    headers: { authorization: "Bearer wren-token" },
+  })).json();
+  assert.equal(deliveredLink.messages.at(-1).auth_method, "posting_link");
   assert.equal((await fetch(link)).status, 200);
   assert.equal(messages.length, beforeLink + 1);
+  const blankReplyLink = `${base}/p/${"s".repeat(32)}?msg=${encodeURIComponent("Blank reply @Wren")}&reply_to=&client_request_id=link-trial-2`;
+  assert.equal((await fetch(blankReplyLink)).status, 201);
+  assert.equal(messages.at(-1).reply_to, null);
+  const dedupBase = `${base}/p/${"s".repeat(32)}?msg=${encodeURIComponent("Same body @Wren")}`;
+  assert.equal((await fetch(dedupBase + "&context_preference=fresh")).status, 201);
+  assert.equal((await fetch(dedupBase + "&context_preference=fresh")).status, 200);
+  assert.equal((await fetch(dedupBase + "&context_preference=continue")).status, 201);
 
-  process.stdout.write("API integration passed: 130-message backlog, filtered cursor, tags, reply, retry, posting link.\n");
+  process.stdout.write("API integration passed: backlog, recent/older paging, tags, reply, retry, link provenance.\n");
 } finally {
   app.kill();
   supabase.close();

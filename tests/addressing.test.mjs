@@ -21,17 +21,19 @@ test("name handles are case insensitive and quotes are prose", () => {
 test("@everyone addresses the active roster without a direct invocation", () => {
   assert.deepEqual(resolveRecipients("Hello @everyone", roster, "a"), {
     addressing: "everyone",
-    recipients: [{ id: "b", handle: "wren" }, { id: "c", handle: "lana" }],
+    recipients: [],
   });
   assert.throws(() => resolveRecipients("@everyone @Wren", roster, "a"), /by itself/);
 });
 
-test("a linked reply addresses the original sender", () => {
-  assert.deepEqual(resolveRecipients("The answer is ready", roster, "a", "b"), {
-    addressing: "direct",
-    recipients: [{ id: "b", handle: "wren" }],
+test("a reply needs an explicit tag and a self mention does not invoke", () => {
+  assert.deepEqual(resolveRecipients("The answer is ready", roster, "a"), {
+    addressing: "none", recipients: [],
   });
-  assert.throws(() => resolveRecipients("Done @everyone", roster, "a", "b"), /directly/);
+  assert.deepEqual(resolveRecipients("I have it, @Wren", roster, "a").recipients, [{ id: "b", handle: "wren" }]);
+  assert.deepEqual(resolveRecipients("Note to @Claire", roster, "a"), {
+    addressing: "none", recipients: [],
+  });
 });
 
 test("unknown names fail rather than silently become room discussion", () => {
@@ -40,4 +42,10 @@ test("unknown names fail rather than silently become room discussion", () => {
 
 test("a quote spanning lines does not address anyone inside it", () => {
   assert.deepEqual(mentionedHandles('She wrote "@Wren\nand @Lana" before asking @Claire.'), ["claire"]);
+});
+
+test("curly quotes, tilde fences, and footmarks do not misroute", () => {
+  assert.deepEqual(mentionedHandles("She wrote “@Wren …” then asked @Claire"), ["claire"]);
+  assert.deepEqual(mentionedHandles("5' wide\n@Wren"), ["wren"]);
+  assert.deepEqual(mentionedHandles("~~~text\n@Wren\n~~~\n@Claire"), ["claire"]);
 });

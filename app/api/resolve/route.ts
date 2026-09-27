@@ -27,22 +27,20 @@ export async function POST(request: NextRequest) {
     if (!ownResponse.ok) throw new Error("Agent identity could not be checked.");
     const identity = (await ownResponse.json())[0];
     if (!identity) return NextResponse.json({ error: "Agent identity could not be checked." }, { status: 401 });
-    let parentSenderId: string | undefined;
     if (payload.reply_to !== undefined && payload.reply_to !== null) {
       const replyTo = String(payload.reply_to);
       if (!/^[1-9][0-9]*$/.test(replyTo)) return NextResponse.json({ error: "Invalid reply reference." }, { status: 400 });
-      const parentQuery = new URLSearchParams({ id: `eq.${replyTo}`, select: "agent_id", limit: "1" });
+      const parentQuery = new URLSearchParams({ id: `eq.${replyTo}`, select: "id", limit: "1" });
       const parentResponse = await fetch(`${url}/rest/v1/messages?${parentQuery}`, { headers, cache: "no-store" });
       if (!parentResponse.ok) throw new Error("The reply reference could not be checked.");
-      parentSenderId = (await parentResponse.json())[0]?.agent_id;
-      if (!parentSenderId) return NextResponse.json({ error: "The reply reference does not exist." }, { status: 400 });
+      if (!(await parentResponse.json())[0]) return NextResponse.json({ error: "The reply reference does not exist." }, { status: 400 });
     }
     const rosterResponse = await fetch(url + "/rest/v1/agents?active=is.true&select=id,slug,handle,display_name", {
       headers, cache: "no-store",
     });
     if (!rosterResponse.ok) throw new Error("The room roster could not be read.");
     const roster: RosterEntry[] = await rosterResponse.json();
-    return NextResponse.json(resolveRecipients(body, roster, identity.id, parentSenderId));
+    return NextResponse.json(resolveRecipients(body, roster, identity.id));
   } catch (caught) {
     const message = caught instanceof Error ? caught.message : "Recipients could not be checked.";
     const invalid = /^(Unknown handle|Use @everyone|A linked reply|The reply recipient)/.test(message);

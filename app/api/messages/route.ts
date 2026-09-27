@@ -84,30 +84,35 @@ export async function GET(request: NextRequest) {
   try {
     const { url, headers } = config();
     const after = cursor(request.nextUrl.searchParams.get("after_id"));
+    const before = cursor(request.nextUrl.searchParams.get("before_id"));
+    if (after !== null && before !== null) throw new Error("Use one message cursor at a time.");
     const limit = pageSize(request.nextUrl.searchParams.get("limit"));
     const forMe = request.nextUrl.searchParams.get("for_me") === "true";
     const agentId = request.nextUrl.searchParams.get("agent_id")?.trim().toLowerCase() ?? "";
     const recipientId = forMe ? await authenticatedAgent(request, agentId, url, headers) : null;
     if (forMe && !recipientId) return NextResponse.json({ error: "Agent identity is required for addressed reads." }, { status: 401 });
     const query = new URLSearchParams({
-      select: "id,delivery_order,body,created_at,recipients,addressing,reply_to,context_preference,expires_at,agent:agents(slug,handle,display_name)",
+      select: "id,delivery_order,body,created_at,recipients,addressing,auth_method,reply_to,context_preference,expires_at,agent:agents(slug,handle,display_name)",
       order: after === null ? "delivery_order.desc" : "delivery_order.asc",
-      limit: String(after === null ? MAX_PAGE : limit + 1),
+      limit: String(limit + 1),
     });
     if (after !== null) query.set("delivery_order", `gt.${after}`);
+    if (before !== null) query.set("delivery_order", `lt.${before}`);
     const response = await fetch(`${url}/rest/v1/messages?${query}`, { headers, cache: "no-store" });
     if (!response.ok) throw new Error("The message room could not be read.");
     const rows = await response.json();
-    const hasMore = after !== null && rows.length > limit;
-    const scanned = after === null ? rows.reverse() : rows.slice(0, limit);
+    const hasMore = rows.length > limit;
+    const scanned = after === null ? rows.slice(0, limit).reverse() : rows.slice(0, limit);
     const messages = forMe
-      ? scanned.filter((row: { recipients: { id: string }[] }) => row.recipients.some((recipient) => recipient.id === recipientId))
+      ? scanned.filter((row: { addressing: string; recipients: { id: string }[] }) =>
+          row.addressing === "everyone" || row.recipients.some((recipient) => recipient.id === recipientId))
       : scanned;
     const nextCursor = scanned.length ? String(scanned[scanned.length - 1].delivery_order) : after;
-    return NextResponse.json({ messages, next_cursor: nextCursor, has_more: hasMore });
+    const olderCursor = scanned.length ? String(scanned[0].delivery_order) : before;
+    return NextResponse.json({ messages, next_cursor: nextCursor, older_cursor: olderCursor, has_more: hasMore });
   } catch (caught) {
     const message = caught instanceof Error ? caught.message : "Room unavailable.";
-    const invalid = message.startsWith("Invalid message cursor") || message.startsWith("Page size");
+    const invalid = message.startsWith("Invalid message cursor") || message.startsWith("Page size") || message.startsWith("Use one message cursor");
     return NextResponse.json({ error: message }, { status: invalid ? 400 : 503 });
   }
 }
@@ -124,19 +129,19 @@ export async function POST(request: NextRequest) {
     const agentUuid = await authenticatedAgent(request, agentId, url, headers);
     if (!agentUuid) return NextResponse.json({ error: "That agent ID and token do not match." }, { status: 401 });
     const requestHash = createHash("sha256")
-      .update(JSON.stringify([body, payload.reply_to ?? null, payload.context_preference ?? null, payload.expires_at ?? null]))
+      .update(JSON.stringify(["bearer", body, payload.reply_to ?? null, payload.context_preference ?? null, payload.expires_at ?? null]))
       .digest("hex");
     const lookup = new URLSearchParams({
       agent_id: `eq.${agentUuid}`,
       client_request_id: `eq.${requestId}`,
-      select: "id,request_payload_hash,recipients,addressing",
+      select: "id,request_payload_hash,recipients,addressing,auth_method",
       limit: "1",
     });
     const saved = await fetch(`${url}/rest/v1/messages?${lookup}`, { headers, cache: "no-store" });
     if (!saved.ok) throw new Error("The saved message could not be checked.");
     const previous = (await saved.json())[0];
     if (previous) {
-      if (previous.request_payload_hash !== requestHash) {
+      if (previous.request_payload_hash !== requestHash || previous.auth_method !== "bearer") {
         return NextResponse.json({ error: "Retry identifier was already used for a different message." }, { status: 409 });
       }
       return NextResponse.json({
@@ -148,18 +153,16 @@ export async function POST(request: NextRequest) {
     const parentId = replyId(payload.reply_to);
     const preference = contextPreference(payload.context_preference);
     const expiresAt = expiry(payload.expires_at);
-    let parentSenderId: string | undefined;
     if (parentId) {
-      const parentQuery = new URLSearchParams({ id: `eq.${parentId}`, select: "agent_id", limit: "1" });
+      const parentQuery = new URLSearchParams({ id: `eq.${parentId}`, select: "id", limit: "1" });
       const parentResponse = await fetch(`${url}/rest/v1/messages?${parentQuery}`, { headers, cache: "no-store" });
       if (!parentResponse.ok) throw new Error("The reply reference could not be checked.");
-      parentSenderId = (await parentResponse.json())[0]?.agent_id;
-      if (!parentSenderId) return NextResponse.json({ error: "The reply reference does not exist." }, { status: 400 });
+      if (!(await parentResponse.json())[0]) return NextResponse.json({ error: "The reply reference does not exist." }, { status: 400 });
     }
-    const addressed = resolveRecipients(body, await roster(url, headers), agentUuid, parentSenderId);
+    const addressed = resolveRecipients(body, await roster(url, headers), agentUuid);
     const message = {
       agent_id: agentUuid, body, client_request_id: requestId, request_payload_hash: requestHash,
-      recipients: addressed.recipients, addressing: addressed.addressing,
+      recipients: addressed.recipients, addressing: addressed.addressing, auth_method: "bearer",
       reply_to: parentId, context_preference: preference, expires_at: expiresAt,
     };
 
@@ -181,7 +184,7 @@ export async function POST(request: NextRequest) {
     if (!existingResponse.ok) throw new Error("The saved message could not be checked.");
     const existing = (await existingResponse.json())[0];
     if (!existing) throw new Error("The message could not be saved.");
-    if (existing.request_payload_hash !== requestHash) {
+    if (existing.request_payload_hash !== requestHash || existing.auth_method !== "bearer") {
       return NextResponse.json({ error: "Retry identifier was already used for a different message." }, { status: 409 });
     }
     return NextResponse.json({

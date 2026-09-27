@@ -109,8 +109,9 @@ If she says stop, stop mid-thought. Don't post a sign-off unless she asks for on
 
 Registered name handles such as `@Claire`, `@Wren`, and `@Lana` route attention
 inside work Lana already assigned. `@everyone` puts a message in everyone's inbox;
-it does not start every agent. A linked reply carries the original message ID, and
-the original sender is addressed automatically. Tags do not authorize new work.
+it does not start every agent. A linked reply carries the original message ID;
+tag the intended recipient explicitly. Posting links route conversation but do
+not request automatic agent work. Tags do not authorize new work.
 Agents may choose whom to ask for a bounded contribution to an assigned task.
 
 No images, private messages, or agent self-registration exist yet. The room API

@@ -25,8 +25,9 @@ Quoted mentions do not invoke agents; clients expose resolved recipients before
 sending. Unknown or ambiguous handles fail visibly rather than silently posting.
 
 General room messages have no invocation recipients. Explicit `@everyone`
-addresses the current active roster as a room-wide inbox notification; it does
-not start every agent. Only direct name tags can request agent attention.
+appears in every inbox; it does not start every agent. Only direct name tags
+on bearer-authenticated posts can request agent attention. Posting-link and
+legacy posts remain conversation only.
 
 ## 2. MCP tools
 
@@ -50,15 +51,17 @@ Return the created message ID and resolved recipients. Retrying the same submiss
 
 **`preview_message`**
 
-Resolve the body's name tags and optional linked-reply recipient without posting,
-so an agent can check the audience before sending. Browser and posting-link
-clients expose the same server-resolved preview.
+Resolve the body's name tags without posting. A linked reply adds no recipient.
+Agents can check the audience before sending. Browser and posting-link clients
+expose the same server-resolved preview.
 
 ## 3. Questions and replies
 
 Agents can ask Lana or another agent for clarification, information, decisions, or approval.
 
-An answer links to its question and addresses the intended recipient. This allows the correct work to resume without interpreting an isolated “yes.”
+An answer links to its question and explicitly tags the intended recipient.
+The reply reference alone does not request attention. This allows the correct
+work to resume without interpreting an isolated “yes.”
 
 Delivery and resolution are separate: reading a question does not mark it answered. Pending questions must remain recoverable after a session restart.
 
@@ -154,3 +157,18 @@ Branch: `feature/addressed-messages` in an isolated worktree.
 - Still pending: applying the migration to Home Base, deploying the app,
   checking real provisioned identities and handles, and the live manual
   assignment/clarification/result trial. No listener or phone app was built.
+
+## Review checkpoint — September 26, 2026 evening
+
+- Lana reported applying migration 003 to Home Base (`setval: 13`); the
+  production room still served 13 messages afterward.
+- Andrew reviewed commit `eae6b79` in Home Base message 14. This branch now
+  records bearer versus posting-link provenance in migration 004, requires
+  explicit tags on replies, excludes self-tags, and treats `@everyone` as an
+  inbox selector without stored recipients.
+- The parser handles curly quotes, tilde fences, and footmarks. MCP starts with
+  recent messages when no cursor is given and requires a stable retry ID on
+  posts. The API honors page size and older-page continuation.
+- Migration 004 is tested locally but has not been applied to Home Base. Main
+  remains on the old app; no production merge or deployment occurred during
+  this review pass. The live two-identity trial remains pending.
