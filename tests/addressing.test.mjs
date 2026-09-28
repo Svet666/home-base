@@ -23,6 +23,10 @@ test("@everyone addresses the active roster without a direct invocation", () => 
     addressing: "everyone",
     recipients: [],
   });
+  assert.deepEqual(resolveRecipients("@everyone heads up", roster, "a"), {
+    addressing: "everyone",
+    recipients: [],
+  });
   assert.throws(() => resolveRecipients("@everyone\n@Wren", roster, "a"), /by itself/);
 });
 
