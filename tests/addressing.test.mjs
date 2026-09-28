@@ -19,11 +19,25 @@ test("name handles are case insensitive and quotes are prose", () => {
 });
 
 test("@everyone addresses the active roster without a direct invocation", () => {
-  assert.deepEqual(resolveRecipients("Hello @everyone", roster, "a"), {
+  assert.deepEqual(resolveRecipients("  @everyone  ", roster, "a"), {
     addressing: "everyone",
     recipients: [],
   });
-  assert.throws(() => resolveRecipients("@everyone @Wren", roster, "a"), /by itself/);
+  assert.throws(() => resolveRecipients("@everyone\n@Wren", roster, "a"), /by itself/);
+});
+
+test("@everyone in prose does not route or block a direct tag", () => {
+  assert.deepEqual(resolveRecipients("Hello @everyone", roster, "a"), {
+    addressing: "none", recipients: [],
+  });
+  assert.deepEqual(resolveRecipients("Tell @everyone that @Wren has it", roster, "a"), {
+    addressing: "direct", recipients: [{ id: "b", handle: "wren" }],
+  });
+});
+
+test("an at-sign in a path or word is not a tag", () => {
+  assert.deepEqual(mentionedHandles("C:\\work\\@Wren and foo@Lana and ...@Claire"), []);
+  assert.deepEqual(mentionedHandles("(@Wren) and @Lana"), ["wren", "lana"]);
 });
 
 test("a reply needs an explicit tag and a self mention does not invoke", () => {

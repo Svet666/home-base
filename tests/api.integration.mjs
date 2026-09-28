@@ -155,7 +155,7 @@ try {
   const taggedReply = await post("wren-actex", "wren-token", "I can help @Claire", "trial-request-2b", { reply_to: created.id });
   assert.equal(taggedReply.status, 201);
   assert.deepEqual((await taggedReply.json()).recipients, [{ id: "a", handle: "claire" }]);
-  const everyone = await post("claire-codex", "claire-token", "News @everyone", "trial-request-3");
+  const everyone = await post("claire-codex", "claire-token", "News\n@everyone", "trial-request-3");
   assert.equal((await everyone.json()).addressing, "everyone");
   assert.deepEqual(messages.at(-1).recipients, []);
   const addressedEveryone = await (await fetch(`${base}/api/messages?after_id=130&for_me=true&agent_id=wren-actex`, {
