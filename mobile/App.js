@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, FlatList, Pressable, SafeAreaView, StyleSheet, Text, TextInput, View } from 'react-native';
 import * as Crypto from 'expo-crypto';
 import * as SecureStore from 'expo-secure-store';
 import { StatusBar } from 'expo-status-bar';
-import { postMessage, previewMessage, readAllMessages } from './src/api.mjs';
+import { postMessage, previewMessage, readAllMessages, readMessages } from './src/api.mjs';
 
 const TOKEN_KEY = 'lana-phone-token';
 const PENDING_KEY = 'lana-phone-pending-message';
@@ -20,6 +20,13 @@ export default function App() {
   const [token, setToken] = useState(null);
   const [tokenInput, setTokenInput] = useState('');
   const [messages, setMessages] = useState([]);
+  const [olderCursor, setOlderCursor] = useState(null);
+  const [hasOlder, setHasOlder] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const roomGeneration = useRef(0);
+  const roomLoading = useRef(false);
+  const olderLoading = useRef(false);
+  const roomDragged = useRef(false);
   const [inbox, setInbox] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -32,19 +39,53 @@ export default function App() {
   const [sent, setSent] = useState('');
 
   const refresh = useCallback(async (currentToken = token) => {
+    const generation = ++roomGeneration.current;
+    roomLoading.current = true;
+    roomDragged.current = false;
     setLoading(true);
     setError('');
     try {
-      const room = await readAllMessages(fetch);
-      setMessages(room.slice().reverse());
+      const room = await readMessages(fetch);
+      if (generation !== roomGeneration.current) return;
+      setMessages(room.messages.slice().reverse());
+      setOlderCursor(room.older_cursor);
+      setHasOlder(room.has_more);
       if (currentToken) {
         const addressed = await readAllMessages(fetch, { token: currentToken, forMe: true });
-        setInbox(addressed.slice().reverse());
-      } else setInbox([]);
+        if (generation === roomGeneration.current) setInbox(addressed.slice().reverse());
+      } else if (generation === roomGeneration.current) setInbox([]);
     } catch (caught) {
-      setError(caught.message || 'Could not refresh the room.');
-    } finally { setLoading(false); }
+      if (generation === roomGeneration.current) setError(caught.message || 'Could not refresh the room.');
+    } finally {
+      if (generation === roomGeneration.current) {
+        roomLoading.current = false;
+        setLoading(false);
+      }
+    }
   }, [token]);
+
+  async function loadOlder() {
+    if (!roomDragged.current || !hasOlder || !olderCursor || roomLoading.current || olderLoading.current) return;
+    roomDragged.current = false;
+    olderLoading.current = true;
+    setLoadingOlder(true);
+    const generation = roomGeneration.current;
+    try {
+      const page = await readMessages(fetch, { beforeId: olderCursor });
+      if (generation !== roomGeneration.current) return;
+      setMessages((current) => {
+        const seen = new Set(current.map((message) => String(message.id)));
+        return [...current, ...page.messages.slice().reverse().filter((message) => !seen.has(String(message.id)))];
+      });
+      setOlderCursor(page.older_cursor);
+      setHasOlder(page.has_more);
+    } catch (caught) {
+      if (generation === roomGeneration.current) setError(caught.message || 'Could not load older messages.');
+    } finally {
+      olderLoading.current = false;
+      setLoadingOlder(false);
+    }
+  }
 
   useEffect(() => {
     let active = true;
@@ -162,10 +203,15 @@ export default function App() {
     {loading ? <ActivityIndicator style={styles.spinner} color={colors.blue} /> : null}
     {(tab === 'room' || tab === 'inbox') ? <FlatList
       data={tab === 'room' ? messages : inbox}
+      inverted={tab === 'room'}
       keyExtractor={(item) => String(item.id)}
       renderItem={renderMessage}
       refreshing={loading}
       onRefresh={() => refresh()}
+      onScrollBeginDrag={() => { if (tab === 'room') roomDragged.current = true; }}
+      onEndReached={tab === 'room' ? loadOlder : undefined}
+      onEndReachedThreshold={0.2}
+      ListFooterComponent={tab === 'room' && loadingOlder ? <ActivityIndicator color={colors.blue} /> : null}
       ListEmptyComponent={<Text style={styles.empty}>{tab === 'inbox' && !token ? 'Enter your phone token in Settings to read your inbox.' : 'No messages yet.'}</Text>}
       contentContainerStyle={styles.list}
     /> : null}
