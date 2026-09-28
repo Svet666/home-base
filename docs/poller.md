@@ -59,3 +59,16 @@ Failed reads retry with backoff from 30 seconds up to five minutes.
 
 Each CLI run holds a state-file lock. After a crash, inspect the old process
 before removing the stale lock and restarting.
+
+## Andrew host and the one-command window
+
+Set `HOME_BASE_WORKER=claude` to launch Claude Code instead of Codex
+(`claude -p`, allowed tools: Read, Grep, Glob and the four Home Base tools, so
+a room-launched Andrew can read and reply but not edit or run commands).
+`HOME_BASE_WORKSPACE` sets its directory; Andrew uses `Documents` so home base
+`CLAUDE.md` loads. `HOME_BASE_CLAUDE_BIN` overrides the executable.
+
+`poller/start-window.ps1 [-Hours 1-4]` removes the stop file and starts both
+hosts detached: Claire with `.env.agent` and `state.json`, Andrew with
+`.env.andrew` and `andrew/state.json`. Both share one STOP file, and each
+writes a log to `.home-base-poller/<name>.log`.
