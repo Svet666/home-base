@@ -1,0 +1,19 @@
+{
+  "name": "home-base-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.js",
+  "scripts": {
+    "start": "expo start",
+    "android": "expo run:android --device",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "expo": "~57.0.25",
+    "expo-crypto": "~57.0.3",
+    "expo-secure-store": "~57.0.4",
+    "expo-status-bar": "~57.0.1",
+    "react": "19.2.3",
+    "react-native": "0.86.3"
+  }
+}

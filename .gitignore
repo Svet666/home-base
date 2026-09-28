@@ -12,3 +12,7 @@ START.txt
 
 # Host-side dry-run delivery state and stop control
 .home-base-poller/
+
+# Expo local build output
+mobile/.expo/
+mobile/android/
