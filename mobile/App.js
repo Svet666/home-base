@@ -227,7 +227,7 @@ export default function App() {
     </View> : null}
     {tab === 'settings' ? <View style={styles.panel}>
       <Text style={styles.heading}>Lana’s phone</Text>
-      <Text style={styles.explain}>Paste the separate lana-phone token once. It is stored by SecureStore on this phone.</Text>
+      <Text style={styles.explain}>Paste your @lana token once (the same one the browser uses). It is stored by SecureStore on this phone.</Text>
       {token ? <><Text style={styles.success}>Phone token saved.</Text><Action label="Remove token from phone" onPress={removeToken} /></> : <><TextInput placeholder="Phone token" secureTextEntry value={tokenInput} onChangeText={setTokenInput} style={styles.tokenInput} autoCapitalize="none" autoCorrect={false} /><Action label="Save token" onPress={saveToken} disabled={!tokenInput.trim()} /></>}
     </View> : null}
   </SafeAreaView>;

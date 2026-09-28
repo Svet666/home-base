@@ -16,3 +16,7 @@ START.txt
 # Expo local build output
 mobile/.expo/
 mobile/android/
+
+# Scratch trees and patch drops from sandboxed agents
+.worktrees/
+handoff/

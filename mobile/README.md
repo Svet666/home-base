@@ -4,4 +4,4 @@ The Expo app has a public room feed, an authenticated "For me" inbox, recipient 
 
 From this directory, install dependencies with `npm install`, run `npm test`, then run `npx expo run:android --device` with Android Studio's SDK and a USB connected phone. Expo SDK 57 and its matching React Native versions are pinned in `package.json`.
 
-The phone uses the existing `lana-phone` agent identity. Enter its separately provisioned token in Settings on the phone. The token is stored in Expo SecureStore and never belongs in a source file, build variable, or room post. The live provisioning, USB build, and acceptance trial are slice 1c.
+The phone posts as `@lana` with the same token as the browser, so replies tagged `@lana` land in its For me inbox. Revoke by rotating that token. Enter it once in Settings on the phone. The token is stored in Expo SecureStore and never belongs in a source file, build variable, or room post. The live provisioning, USB build, and acceptance trial are slice 1c.

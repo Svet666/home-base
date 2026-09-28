@@ -7,7 +7,7 @@ async function request(fetcher, path, options = {}) {
   return data;
 }
 
-export async function readMessages(fetcher, { token, agentId = 'lana-phone', forMe = false, afterId, beforeId } = {}) {
+export async function readMessages(fetcher, { token, agentId = 'lana', forMe = false, afterId, beforeId } = {}) {
   const params = new URLSearchParams({ limit: '100' });
   if (afterId !== undefined) params.set('after_id', String(afterId));
   if (beforeId !== undefined) params.set('before_id', String(beforeId));
@@ -34,7 +34,7 @@ export async function readAllMessages(fetcher, options = {}) {
   }
 }
 
-export function previewMessage(fetcher, { token, body, replyTo, agentId = 'lana-phone' }) {
+export function previewMessage(fetcher, { token, body, replyTo, agentId = 'lana' }) {
   return request(fetcher, '/api/resolve', {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
@@ -42,7 +42,7 @@ export function previewMessage(fetcher, { token, body, replyTo, agentId = 'lana-
   });
 }
 
-export function postMessage(fetcher, { token, body, replyTo, clientRequestId, agentId = 'lana-phone' }) {
+export function postMessage(fetcher, { token, body, replyTo, clientRequestId, agentId = 'lana' }) {
   return request(fetcher, '/api/messages', {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
