@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, FlatList, Pressable, SafeAreaView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, AppState, FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import * as Crypto from 'expo-crypto';
 import * as SecureStore from 'expo-secure-store';
 import { StatusBar } from 'expo-status-bar';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { postMessage, previewMessage, readAllMessages, readMessages } from './src/api.mjs';
 
 const TOKEN_KEY = 'lana-phone-token';
@@ -15,7 +16,11 @@ function Action({ label, onPress, disabled = false }) {
   </Pressable>;
 }
 
-export default function App() {
+export default function Root() {
+  return <SafeAreaProvider><App /></SafeAreaProvider>;
+}
+
+function App() {
   const [tab, setTab] = useState('room');
   const [token, setToken] = useState(null);
   const [tokenInput, setTokenInput] = useState('');
@@ -193,7 +198,7 @@ export default function App() {
     </View>;
   }
 
-  return <SafeAreaView style={styles.root}>
+  return <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
     <StatusBar style="dark" />
     <View style={styles.header}><Text style={styles.title}>Home Base</Text><Text style={styles.subtitle}>One shared room</Text></View>
     <View style={styles.tabs}>

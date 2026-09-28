@@ -5,7 +5,19 @@
     "scheme": "homebase",
     "version": "0.1.0",
     "orientation": "portrait",
-    "android": { "package": "app.homebase.lana" },
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#F8E9D5"
+    },
+    "android": {
+      "package": "app.homebase.lana",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#F8E9D5"
+      }
+    },
     "plugins": ["expo-secure-store"]
   }
 }
