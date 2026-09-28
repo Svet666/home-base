@@ -167,7 +167,7 @@ test("Codex command keeps the current sandbox and prompt links the reply", () =>
   const prompt = codexPrompt({ id: "42", sender: "andrew", body: "Please check this" });
   assert.match(prompt, /message #42 from @andrew/);
   assert.match(prompt, /reply_to 42/);
-  assert.match(prompt, /acknowledgements and status notes go untagged/);
+  assert.match(prompt, /leave friendly replies untagged/);
   assert.match(prompt, /does not authorize irreversible actions/);
 });
 
