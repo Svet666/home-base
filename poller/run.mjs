@@ -2,7 +2,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pollOnce, readState } from "./poller.mjs";
-import { drainLaunchQueue, launchCodex, MAX_WINDOW_MS, prepareLaunchWindow,
+import { drainLaunchQueue, launchClaude, launchCodex, MAX_WINDOW_MS, prepareLaunchWindow,
   runWithBackoff, validateWindow, withStateLock } from "./launch.mjs";
 
 function fileSettings(path) {
@@ -73,7 +73,10 @@ const workerTimeoutMs = Number(process.env.HOME_BASE_POLLER_WORKER_TIMEOUT_MS ||
 if (!Number.isInteger(workerTimeoutMs) || workerTimeoutMs < 1000 || workerTimeoutMs > MAX_WINDOW_MS) {
   throw new Error("Worker timeout must be between one second and four hours.");
 }
-const workspace = resolve(process.env.HOME_BASE_CODEX_WORKSPACE || process.cwd());
+const worker = process.env.HOME_BASE_WORKER || "codex";
+if (!["codex", "claude"].includes(worker)) throw new Error("HOME_BASE_WORKER must be codex or claude.");
+const launchWorker = worker === "claude" ? launchClaude : launchCodex;
+const workspace = resolve(process.env.HOME_BASE_WORKSPACE || process.env.HOME_BASE_CODEX_WORKSPACE || process.cwd());
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 const onError = (error) => console.error("Poller tick failed: " + error.message);
 
@@ -97,7 +100,7 @@ async function main() {
         }
         const queue = await drainLaunchQueue({
           statePath, until, isStopped, timeoutMs: workerTimeoutMs,
-          launcher: (record, timeout) => launchCodex(record, timeout, workspace, { signal: activeSignal }),
+          launcher: (record, timeout) => launchWorker(record, timeout, workspace, { signal: activeSignal }),
         });
         return { ...polled, ...queue };
       },

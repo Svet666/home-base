@@ -5,7 +5,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pollOnce, readState, writeState } from "../poller/poller.mjs";
-import { codexExecArgs, codexPrompt, drainLaunchQueue, launchCodex, prepareLaunchWindow,
+import { claudePrompt, codexExecArgs, codexPrompt, drainLaunchQueue, launchClaude, launchCodex, prepareLaunchWindow,
   resolveCodexCommand, runWithBackoff, validateWindow, withStateLock } from "../poller/launch.mjs";
 
 async function withState(run) {
@@ -212,4 +212,29 @@ test("interrupting Codex terminates the child process", async () => {
     "C:/home-base-scaffold", { spawnImpl, env: { HOME_BASE_CODEX_BIN: "C:\\codex.exe" },
       platform: "win32", signal: controller.signal }), /interrupted/);
   assert.equal(killed, true);
+});
+
+test("Claude worker runs print mode with read-only tools and the room tools", async () => {
+  let call;
+  let written = "";
+  const spawnImpl = (command, args, options) => {
+    call = { command, args, options };
+    const child = new EventEmitter();
+    child.stdin = new EventEmitter();
+    child.stdin.end = (text) => { written = text; setImmediate(() => child.emit("close", 0)); };
+    child.kill = () => {};
+    return child;
+  };
+  const result = await launchClaude({ id: "42", sender: "lana", body: "Status?" }, 1000,
+    "C:/Documents", { spawnImpl, env: {}, platform: "win32" });
+  assert.equal(result.exitCode, 0);
+  assert.ok(call.command.endsWith(".local\\bin\\claude.exe"));
+  assert.equal(call.args[0], "-p");
+  assert.ok(call.args.includes("mcp__home-base__post_message"));
+  assert.ok(!call.args.some((arg) => /^(Bash|Edit|Write)$/.test(arg)));
+  assert.equal(call.options.cwd, "C:/Documents");
+  assert.equal(call.options.shell, false);
+  assert.match(written, /You are Andrew/);
+  assert.match(written, /reply_to 42/);
+  assert.match(claudePrompt({ id: "7", body: "x" }), /@unknown/);
 });

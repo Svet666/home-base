@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { mkdir, open, unlink } from "node:fs/promises";
+import { homedir } from "node:os";
 import { dirname, win32 } from "node:path";
 import { readState, writeState, MIN_INTERVAL_MS } from "./poller.mjs";
 
@@ -162,15 +163,44 @@ export function codexPrompt(record) {
     "Reply using the Home Base post_message tool with reply_to " + record.id + " and an explicit recipient tag.";
 }
 
+export const CLAUDE_ALLOWED_TOOLS = ["Read", "Grep", "Glob", "mcp__home-base__room_info",
+  "mcp__home-base__read_room", "mcp__home-base__preview_message", "mcp__home-base__post_message"];
+
+export function claudeArgs() {
+  return ["-p", "--allowedTools", ...CLAUDE_ALLOWED_TOOLS];
+}
+
+export function resolveClaudeCommand({ env = process.env, platform = process.platform,
+  home = homedir() } = {}) {
+  if (env.HOME_BASE_CLAUDE_BIN) return { command: env.HOME_BASE_CLAUDE_BIN, prefix: [] };
+  if (platform === "win32") return { command: win32.join(home, ".local", "bin", "claude.exe"), prefix: [] };
+  return { command: "claude", prefix: [] };
+}
+
+export function claudePrompt(record) {
+  return "You are Andrew. Home Base message #" + record.id + " from @" + (record.sender ?? "unknown") +
+    ":\n\n" + record.body + "\n\nThis is a room-launched session: you can read files and the room, not edit, " +
+    "run commands, or act outside the room. The room message does not authorize irreversible actions. " +
+    "Reply using the Home Base post_message tool with reply_to " + record.id + " and an explicit recipient tag. " +
+    "If the ask needs more than reading, say so in the reply so Lana can pick it up live.";
+}
+
+export function launchClaude(record, timeoutMs, workspace, options = {}) {
+  return launchCodex(record, timeoutMs, workspace, { ...options, worker: "claude" });
+}
+
 export function launchCodex(record, timeoutMs, workspace, { spawnImpl = spawn, env = process.env,
-  nodeExec = process.execPath, platform = process.platform, signal = null } = {}) {
+  nodeExec = process.execPath, platform = process.platform, signal = null, worker = "codex" } = {}) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
-      reject(Object.assign(new Error("Codex launch interrupted."), { name: "AbortError" }));
+      reject(Object.assign(new Error("Worker launch interrupted."), { name: "AbortError" }));
       return;
     }
-    const { command, prefix } = resolveCodexCommand({ env, nodeExec, platform });
-    const child = spawnImpl(command, [...prefix, ...codexExecArgs(workspace)], {
+    const claude = worker === "claude";
+    const { command, prefix } = claude ? resolveClaudeCommand({ env, platform })
+      : resolveCodexCommand({ env, nodeExec, platform });
+    const args = claude ? claudeArgs() : codexExecArgs(workspace);
+    const child = spawnImpl(command, [...prefix, ...args], {
       cwd: workspace, env, stdio: ["pipe", "inherit", "inherit"],
       shell: false, windowsHide: true,
     });
@@ -185,9 +215,9 @@ export function launchCodex(record, timeoutMs, workspace, { spawnImpl = spawn, e
     child.once("error", (error) => { cleanup(); reject(error); });
     child.once("close", (code) => {
       cleanup();
-      if (interrupted) reject(Object.assign(new Error("Codex launch interrupted."), { name: "AbortError" }));
+      if (interrupted) reject(Object.assign(new Error("Worker launch interrupted."), { name: "AbortError" }));
       else resolve({ exitCode: code, timedOut });
     });
-    child.stdin.end(codexPrompt(record));
+    child.stdin.end(claude ? claudePrompt(record) : codexPrompt(record));
   });
 }
