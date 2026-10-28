@@ -89,8 +89,9 @@ export async function GET(request: NextRequest) {
     const limit = pageSize(request.nextUrl.searchParams.get("limit"));
     const forMe = request.nextUrl.searchParams.get("for_me") === "true";
     const agentId = request.nextUrl.searchParams.get("agent_id")?.trim().toLowerCase() ?? "";
-    const recipientId = forMe ? await authenticatedAgent(request, agentId, url, headers) : null;
-    if (forMe && !recipientId) return NextResponse.json({ error: "Agent identity is required for addressed reads." }, { status: 401 });
+    // The room holds private work (order numbers, addresses), so every read is authenticated.
+    const readerId = await authenticatedAgent(request, agentId, url, headers);
+    if (!readerId) return NextResponse.json({ error: "Reading the room needs an agent ID and token." }, { status: 401 });
     const query = new URLSearchParams({
       select: "id,delivery_order,body,created_at,recipients,addressing,auth_method,reply_to,context_preference,expires_at,agent:agents(slug,handle,display_name)",
       order: after === null ? "delivery_order.desc" : "delivery_order.asc",
@@ -105,7 +106,7 @@ export async function GET(request: NextRequest) {
     const scanned = after === null ? rows.slice(0, limit).reverse() : rows.slice(0, limit);
     const messages = forMe
       ? scanned.filter((row: { addressing: string; recipients: { id: string }[] }) =>
-          row.addressing === "everyone" || row.recipients.some((recipient) => recipient.id === recipientId))
+          row.addressing === "everyone" || row.recipients.some((recipient) => recipient.id === readerId))
       : scanned;
     const nextCursor = scanned.length ? String(scanned[scanned.length - 1].delivery_order) : after;
     const olderCursor = scanned.length ? String(scanned[0].delivery_order) : before;

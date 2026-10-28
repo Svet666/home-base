@@ -43,8 +43,10 @@ const fetchParent = async (parentId, child) => {
   if (!/^[1-9][0-9]*$/.test(before)) throw new Error("Reply is missing its delivery order.");
   while (true) {
     if (await isStopped()) return null;
-    const query = new URLSearchParams({ before_id: before, limit: "100" });
-    const response = await fetch(`${baseUrl}/api/messages?${query}`, { cache: "no-store" });
+    const query = new URLSearchParams({ before_id: before, limit: "100", agent_id: agentId });
+    const response = await fetch(`${baseUrl}/api/messages?${query}`, {
+      headers: { authorization: `Bearer ${token}` }, cache: "no-store",
+    });
     const page = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(`Room history read failed (${response.status}): ${page.error || "unknown error"}`);
     if (!Array.isArray(page.messages)) throw new Error("Invalid room history page.");

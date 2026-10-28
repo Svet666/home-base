@@ -88,16 +88,30 @@ try {
   for (let attempt = 0; attempt < 80; attempt++) {
     try {
       const response = await fetch(`${base}/api/messages?after_id=0&limit=1`);
-      if (response.ok) { ready = true; break; }
+      if (response.status === 401) { ready = true; break; }
     } catch {}
     await pause(100);
   }
   assert.ok(ready, "Next.js test server started");
 
+  const read = (query) => fetch(`${base}/api/messages?${query}&agent_id=wren-actex`, {
+    headers: { authorization: "Bearer wren-token" },
+  });
+  assert.equal((await fetch(`${base}/api/messages?limit=5`)).status, 401, "anonymous reads are refused");
+  assert.equal((await fetch(`${base}/api/messages?limit=5&agent_id=wren-actex`, {
+    headers: { authorization: "Bearer claire-token" },
+  })).status, 401, "a token only reads as its own agent");
+  const roomPage = await (await fetch(`${base}/room`)).text();
+  assert.doesNotMatch(roomPage, /History 130/, "the public transcript shows no messages");
+  const linkRead = await fetch(`${base}/p/${"s".repeat(32)}`);
+  assert.equal(linkRead.status, 200);
+  assert.match(await linkRead.text(), /History 130/, "a posting link reads the room");
+  assert.equal(linkRead.headers.get("x-robots-tag"), "noindex, nofollow, noarchive");
+
   let cursor = "0";
   const seen = [];
   while (true) {
-    const response = await fetch(`${base}/api/messages?after_id=${cursor}&limit=30`);
+    const response = await read(`after_id=${cursor}&limit=30`);
     assert.equal(response.status, 200);
     const page = await response.json();
     seen.push(...page.messages.map((message) => Number(message.id)));
@@ -105,10 +119,10 @@ try {
     if (!page.has_more) break;
   }
   assert.deepEqual(seen, Array.from({ length: 130 }, (_, index) => index + 1));
-  const latest = await (await fetch(`${base}/api/messages?limit=5`)).json();
+  const latest = await (await read("limit=5")).json();
   assert.deepEqual(latest.messages.map((message) => message.id), [126, 127, 128, 129, 130]);
   assert.equal(latest.has_more, true);
-  const older = await (await fetch(`${base}/api/messages?before_id=${latest.older_cursor}&limit=5`)).json();
+  const older = await (await read(`before_id=${latest.older_cursor}&limit=5`)).json();
   assert.deepEqual(older.messages.map((message) => message.id), [121, 122, 123, 124, 125]);
 
   cursor = "0";
@@ -187,7 +201,7 @@ try {
   assert.equal((await fetch(dedupBase + "&context_preference=fresh")).status, 200);
   assert.equal((await fetch(dedupBase + "&context_preference=continue")).status, 201);
 
-  process.stdout.write("API integration passed: backlog, recent/older paging, tags, reply, retry, link provenance.\n");
+  process.stdout.write("API integration passed: private reads, backlog, recent/older paging, tags, reply, retry, link provenance.\n");
 } finally {
   app.kill();
   supabase.close();

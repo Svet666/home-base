@@ -50,15 +50,17 @@ function App() {
     setLoading(true);
     setError('');
     try {
-      const room = await readMessages(fetch);
+      if (!currentToken) {
+        if (generation === roomGeneration.current) { setMessages([]); setInbox([]); setHasOlder(false); }
+        return;
+      }
+      const room = await readMessages(fetch, { token: currentToken });
       if (generation !== roomGeneration.current) return;
       setMessages(room.messages.slice().reverse());
       setOlderCursor(room.older_cursor);
       setHasOlder(room.has_more);
-      if (currentToken) {
-        const addressed = await readAllMessages(fetch, { token: currentToken, forMe: true });
-        if (generation === roomGeneration.current) setInbox(addressed.slice().reverse());
-      } else if (generation === roomGeneration.current) setInbox([]);
+      const addressed = await readAllMessages(fetch, { token: currentToken, forMe: true });
+      if (generation === roomGeneration.current) setInbox(addressed.slice().reverse());
     } catch (caught) {
       if (generation === roomGeneration.current) setError(caught.message || 'Could not refresh the room.');
     } finally {
@@ -76,7 +78,7 @@ function App() {
     setLoadingOlder(true);
     const generation = roomGeneration.current;
     try {
-      const page = await readMessages(fetch, { beforeId: olderCursor });
+      const page = await readMessages(fetch, { token, beforeId: olderCursor });
       if (generation !== roomGeneration.current) return;
       setMessages((current) => {
         const seen = new Set(current.map((message) => String(message.id)));
@@ -150,6 +152,8 @@ function App() {
       await SecureStore.deleteItemAsync(PENDING_KEY);
       setToken(null);
       setInbox([]);
+      setMessages([]);
+      setHasOlder(false);
       setError('');
       setTab('room');
     } catch (caught) { setError(caught.message || 'Could not remove the token.'); }
@@ -217,7 +221,7 @@ function App() {
       onEndReached={tab === 'room' ? loadOlder : undefined}
       onEndReachedThreshold={0.2}
       ListFooterComponent={tab === 'room' && loadingOlder ? <ActivityIndicator color={colors.blue} /> : null}
-      ListEmptyComponent={<Text style={styles.empty}>{tab === 'inbox' && !token ? 'Enter your phone token in Settings to read your inbox.' : 'No messages yet.'}</Text>}
+      ListEmptyComponent={<Text style={styles.empty}>{!token ? 'Enter your phone token in Settings to read the room.' : 'No messages yet.'}</Text>}
       contentContainerStyle={styles.list}
     /> : null}
     {tab === 'compose' ? <View style={styles.panel}>

@@ -32,10 +32,8 @@ try {
   const post = listed.tools.find((tool) => tool.name === "post_message");
   assert.ok(post.inputSchema.required.includes("client_request_id"));
   const read = await client.callTool({ name: "read_room", arguments: {} });
-  assert.equal(read.isError, undefined);
-  assert.equal(readQuery.has("after_id"), false);
-  assert.equal(readQuery.get("limit"), "30");
-  assert.equal(read.structuredContent.older_cursor, "10");
+  assert.equal(read.isError, true, "the room is private, so reads need credentials");
+  assert.equal(readQuery, undefined, "no anonymous read reaches the API");
   const result = await client.callTool({ name: "room_info", arguments: {} });
   assert.equal(result.isError, true);
   process.stdout.write("MCP smoke passed: four registered tools and credential guard.\n");
