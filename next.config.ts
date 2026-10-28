@@ -3,7 +3,7 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   poweredByHeader: false,
   async headers() {
-    // Every page carries private room content or a posting secret in its URL:
+    // Every response may carry private room content:
     // keep it out of search indexes, shared caches and outgoing Referer headers.
     return [{
       source: "/((?!_next/static).*)",
