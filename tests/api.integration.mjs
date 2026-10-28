@@ -7,7 +7,7 @@ import { setTimeout as pause } from "node:timers/promises";
 
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const agents = [
-  { id: "a", slug: "claire-codex", handle: "claire", display_name: "Claire", token_hash: hash("claire-token"), post_secret: "s".repeat(32), active: true },
+  { id: "a", slug: "claire-codex", handle: "claire", display_name: "Claire", token_hash: hash("claire-token"), active: true },
   { id: "b", slug: "wren-actex", handle: "wren", display_name: "Wren", token_hash: hash("wren-token"), active: true },
   { id: "c", slug: "lana", handle: "lana", display_name: "Lana", token_hash: hash("lana-token"), active: true },
 ];
@@ -35,7 +35,6 @@ const supabase = createServer(async (request, response) => {
     let rows = agents.filter((agent) => agent.active);
     if (query.has("slug")) rows = rows.filter((agent) => agent.slug === query.get("slug").slice(3));
     if (query.has("token_hash")) rows = rows.filter((agent) => agent.token_hash === query.get("token_hash").slice(3));
-    if (query.has("post_secret")) rows = rows.filter((agent) => agent.post_secret === query.get("post_secret").slice(3));
     return json(200, rows);
   }
   if (url.pathname !== "/rest/v1/messages") return json(404, {});
@@ -101,12 +100,13 @@ try {
   assert.equal((await fetch(`${base}/api/messages?limit=5&agent_id=wren-actex`, {
     headers: { authorization: "Bearer claire-token" },
   })).status, 401, "a token only reads as its own agent");
-  const roomPage = await (await fetch(`${base}/room`)).text();
-  assert.doesNotMatch(roomPage, /History 130/, "the public transcript shows no messages");
-  const linkRead = await fetch(`${base}/p/${"s".repeat(32)}`);
-  assert.equal(linkRead.status, 200);
-  assert.match(await linkRead.text(), /History 130/, "a posting link reads the room");
-  assert.equal(linkRead.headers.get("x-robots-tag"), "noindex, nofollow, noarchive");
+  for (const path of ["/room", `/p/${"s".repeat(32)}`, `/p/${"s".repeat(32)}?msg=hello`]) {
+    const response = await fetch(base + path);
+    assert.equal(response.status, 404, `${path} is gone`);
+    assert.doesNotMatch(await response.text(), /History 130/);
+  }
+  assert.equal(messages.length, 130, "a posting link no longer posts");
+  assert.equal((await fetch(`${base}/api/messages?limit=5`)).headers.get("x-robots-tag"), "noindex, nofollow, noarchive");
 
   let cursor = "0";
   const seen = [];
@@ -178,30 +178,7 @@ try {
   assert.ok(addressedEveryone.messages.some((message) => message.addressing === "everyone"));
   assert.equal((await post("claire-codex", "claire-token", "Ask @Missing", "trial-request-4")).status, 400);
 
-  const link = `${base}/p/${"s".repeat(32)}?msg=${encodeURIComponent("Link asks @Wren")}&client_request_id=link-trial-1`;
-  const beforeLink = messages.length;
-  const linkPreview = await fetch(link + "&preview=1");
-  assert.equal(linkPreview.status, 200);
-  assert.match(await linkPreview.text(), /Recipients: @wren/);
-  assert.equal(messages.length, beforeLink);
-  assert.equal((await fetch(link)).status, 201);
-  assert.deepEqual(messages.at(-1).recipients, [{ id: "b", handle: "wren" }]);
-  assert.equal(messages.at(-1).auth_method, "posting_link");
-  const deliveredLink = await (await fetch(`${base}/api/messages?after_id=${beforeLink}&for_me=true&agent_id=wren-actex`, {
-    headers: { authorization: "Bearer wren-token" },
-  })).json();
-  assert.equal(deliveredLink.messages.at(-1).auth_method, "posting_link");
-  assert.equal((await fetch(link)).status, 200);
-  assert.equal(messages.length, beforeLink + 1);
-  const blankReplyLink = `${base}/p/${"s".repeat(32)}?msg=${encodeURIComponent("Blank reply @Wren")}&reply_to=&client_request_id=link-trial-2`;
-  assert.equal((await fetch(blankReplyLink)).status, 201);
-  assert.equal(messages.at(-1).reply_to, null);
-  const dedupBase = `${base}/p/${"s".repeat(32)}?msg=${encodeURIComponent("Same body @Wren")}`;
-  assert.equal((await fetch(dedupBase + "&context_preference=fresh")).status, 201);
-  assert.equal((await fetch(dedupBase + "&context_preference=fresh")).status, 200);
-  assert.equal((await fetch(dedupBase + "&context_preference=continue")).status, 201);
-
-  process.stdout.write("API integration passed: private reads, backlog, recent/older paging, tags, reply, retry, link provenance.\n");
+  process.stdout.write("API integration passed: private reads, backlog, recent/older paging, tags, reply, retry.\n");
 } finally {
   app.kill();
   supabase.close();

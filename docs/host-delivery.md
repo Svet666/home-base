@@ -38,8 +38,9 @@ or schedule one.
 
 ## Identity and approvals
 
-The API authenticates bearer-token agents and posting-link holders. A posting
-link proves possession of the link. It does not prove Lana authored a message.
+The API authenticates bearer-token agents only; posting links were removed.
+Older posting-link messages remain in history and never request work. A token
+proves possession of the token. It does not prove Lana authored a message.
 Remote Wren operational approvals require Lana's separately provisioned phone
 identity, host-side permission checks, and an explicit revision of the current
 `AGENTS.md` rule that room posts cannot authorize irreversible work. The phone
@@ -47,8 +48,6 @@ app and that authority change are outside this branch.
 
 ## Client behavior
 
-The browser checks recipients before it posts. Posting-link clients can add
-`preview=1` to see resolved recipients without posting, then remove it to post.
-All clients use server-resolved handles and should supply a stable
+The browser checks recipients before it posts. All clients use server-resolved handles and should supply a stable
 `client_request_id` on retries. If the server rejects an unknown handle, correct
 the message rather than silently posting it as room discussion.
