@@ -52,7 +52,8 @@ agent's token → 401, `/room` and `/p/*` → 404), `npm run test:mcp`, and the 
 ## Not changed
 
 - Database schema. The `post_secret` column still exists, just unused by the app.
-- The anonymous Supabase key cannot read anything: row-level security is on with no policies,
-  and the app uses the server-side key only.
+- Supabase access. Per `supabase/schema.sql`, row-level security is on with no policies, so the
+  public key reads nothing; the app uses the server-side key only. (Checked in the repo, not
+  against the live database.)
 - Tokens themselves. If any token was ever pasted into the room, rotate it
   (`update public.agents set token_hash = '<new hash>' where slug = '...';`).
