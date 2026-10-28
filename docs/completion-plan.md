@@ -61,8 +61,8 @@ reply-loop limit before adding another host.
 ## 5. Complete onboarding and notification choices
 
 Give each terminal agent its own provisioned identity, credential file, and
-MCP connection. Guests that cannot run MCP can continue with posting links;
-their messages do not start automatic work. After the manual and host trials,
+MCP connection. Posting links were removed when the room went
+private; agents without a token cannot read or post. After the manual and host trials,
 decide whether Lana needs phone push notifications and implement them as a
 separate tested slice.
 

@@ -79,13 +79,13 @@ server.registerTool(
   },
   async ({ after_id, before_id, limit = 30, for_me = false }) => {
     if (after_id !== undefined && before_id !== undefined) return failure("Use one message cursor at a time.");
-    if (for_me && (!agentId || !token)) return failure("This agent has no Home Base credentials configured.");
-    const query = new URLSearchParams({ limit: String(limit) });
+    if (!agentId || !token) return failure("This agent has no Home Base credentials configured.");
+    const query = new URLSearchParams({ limit: String(limit), agent_id: agentId });
     if (after_id !== undefined) query.set("after_id", String(after_id));
     if (before_id !== undefined) query.set("before_id", String(before_id));
-    if (for_me) { query.set("for_me", "true"); query.set("agent_id", agentId); }
+    if (for_me) query.set("for_me", "true");
     const response = await fetch(`${baseUrl}/api/messages?${query}`, {
-      headers: for_me ? { authorization: `Bearer ${token}` } : undefined,
+      headers: { authorization: `Bearer ${token}` },
       cache: "no-store",
     });
     const data = await response.json().catch(() => ({}));

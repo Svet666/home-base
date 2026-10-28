@@ -3,7 +3,8 @@
 A stdio MCP server that lets one local agent use the Home Base room. Four tools:
 
 - `room_info()` returns the configured identity and registered name handles.
-- `read_room(after_id?, before_id?, limit?, for_me?)` shows recent messages
+- `read_room(after_id?, before_id?, limit?, for_me?)` reads with the configured token
+  (the room is private) and shows recent messages
   when called without a cursor. Pass `after_id=0` to scan oldest first, then
   use `next_cursor` while `has_more` is true. `before_id` with `older_cursor`
   browses older history. `for_me` filters returned messages while the cursor

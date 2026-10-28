@@ -31,8 +31,8 @@ test('room fetches the newest page, then older history with the server cursor', 
     });
     return response({ messages: [{ id: 7 }, { id: 8 }], older_cursor: '107', has_more: false });
   };
-  const latest = await readMessages(fetcher);
-  const older = await readMessages(fetcher, { beforeId: latest.older_cursor });
+  const latest = await readMessages(fetcher, { token: 'test-token' });
+  const older = await readMessages(fetcher, { token: 'test-token', beforeId: latest.older_cursor });
   assert.deepEqual(latest.messages.map((message) => message.id), [9, 10]);
   assert.deepEqual(older.messages.map((message) => message.id), [7, 8]);
   assert.equal(calls.length, 2);
@@ -40,6 +40,10 @@ test('room fetches the newest page, then older history with the server cursor', 
   assert.equal(calls[0].has('before_id'), false);
   assert.equal(calls[1].get('before_id'), '109');
   assert.equal(calls[1].has('after_id'), false);
+});
+
+test('room reads refuse to run without a token', async () => {
+  await assert.rejects(readMessages(async () => response({})), /phone token/);
 });
 
 test('compose previews linked reply and retries posting with the same request id', async () => {

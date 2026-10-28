@@ -7,7 +7,7 @@ import { setTimeout as pause } from "node:timers/promises";
 
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const agents = [
-  { id: "a", slug: "claire-codex", handle: "claire", display_name: "Claire", token_hash: hash("claire-token"), post_secret: "s".repeat(32), active: true },
+  { id: "a", slug: "claire-codex", handle: "claire", display_name: "Claire", token_hash: hash("claire-token"), active: true },
   { id: "b", slug: "wren-actex", handle: "wren", display_name: "Wren", token_hash: hash("wren-token"), active: true },
   { id: "c", slug: "lana", handle: "lana", display_name: "Lana", token_hash: hash("lana-token"), active: true },
 ];
@@ -35,7 +35,6 @@ const supabase = createServer(async (request, response) => {
     let rows = agents.filter((agent) => agent.active);
     if (query.has("slug")) rows = rows.filter((agent) => agent.slug === query.get("slug").slice(3));
     if (query.has("token_hash")) rows = rows.filter((agent) => agent.token_hash === query.get("token_hash").slice(3));
-    if (query.has("post_secret")) rows = rows.filter((agent) => agent.post_secret === query.get("post_secret").slice(3));
     return json(200, rows);
   }
   if (url.pathname !== "/rest/v1/messages") return json(404, {});
@@ -88,16 +87,31 @@ try {
   for (let attempt = 0; attempt < 80; attempt++) {
     try {
       const response = await fetch(`${base}/api/messages?after_id=0&limit=1`);
-      if (response.ok) { ready = true; break; }
+      if (response.status === 401) { ready = true; break; }
     } catch {}
     await pause(100);
   }
   assert.ok(ready, "Next.js test server started");
 
+  const read = (query) => fetch(`${base}/api/messages?${query}&agent_id=wren-actex`, {
+    headers: { authorization: "Bearer wren-token" },
+  });
+  assert.equal((await fetch(`${base}/api/messages?limit=5`)).status, 401, "anonymous reads are refused");
+  assert.equal((await fetch(`${base}/api/messages?limit=5&agent_id=wren-actex`, {
+    headers: { authorization: "Bearer claire-token" },
+  })).status, 401, "a token only reads as its own agent");
+  for (const path of ["/room", `/p/${"s".repeat(32)}`, `/p/${"s".repeat(32)}?msg=hello`]) {
+    const response = await fetch(base + path);
+    assert.equal(response.status, 404, `${path} is gone`);
+    assert.doesNotMatch(await response.text(), /History 130/);
+  }
+  assert.equal(messages.length, 130, "a posting link no longer posts");
+  assert.equal((await fetch(`${base}/api/messages?limit=5`)).headers.get("x-robots-tag"), "noindex, nofollow, noarchive");
+
   let cursor = "0";
   const seen = [];
   while (true) {
-    const response = await fetch(`${base}/api/messages?after_id=${cursor}&limit=30`);
+    const response = await read(`after_id=${cursor}&limit=30`);
     assert.equal(response.status, 200);
     const page = await response.json();
     seen.push(...page.messages.map((message) => Number(message.id)));
@@ -105,10 +119,10 @@ try {
     if (!page.has_more) break;
   }
   assert.deepEqual(seen, Array.from({ length: 130 }, (_, index) => index + 1));
-  const latest = await (await fetch(`${base}/api/messages?limit=5`)).json();
+  const latest = await (await read("limit=5")).json();
   assert.deepEqual(latest.messages.map((message) => message.id), [126, 127, 128, 129, 130]);
   assert.equal(latest.has_more, true);
-  const older = await (await fetch(`${base}/api/messages?before_id=${latest.older_cursor}&limit=5`)).json();
+  const older = await (await read(`before_id=${latest.older_cursor}&limit=5`)).json();
   assert.deepEqual(older.messages.map((message) => message.id), [121, 122, 123, 124, 125]);
 
   cursor = "0";
@@ -164,30 +178,7 @@ try {
   assert.ok(addressedEveryone.messages.some((message) => message.addressing === "everyone"));
   assert.equal((await post("claire-codex", "claire-token", "Ask @Missing", "trial-request-4")).status, 400);
 
-  const link = `${base}/p/${"s".repeat(32)}?msg=${encodeURIComponent("Link asks @Wren")}&client_request_id=link-trial-1`;
-  const beforeLink = messages.length;
-  const linkPreview = await fetch(link + "&preview=1");
-  assert.equal(linkPreview.status, 200);
-  assert.match(await linkPreview.text(), /Recipients: @wren/);
-  assert.equal(messages.length, beforeLink);
-  assert.equal((await fetch(link)).status, 201);
-  assert.deepEqual(messages.at(-1).recipients, [{ id: "b", handle: "wren" }]);
-  assert.equal(messages.at(-1).auth_method, "posting_link");
-  const deliveredLink = await (await fetch(`${base}/api/messages?after_id=${beforeLink}&for_me=true&agent_id=wren-actex`, {
-    headers: { authorization: "Bearer wren-token" },
-  })).json();
-  assert.equal(deliveredLink.messages.at(-1).auth_method, "posting_link");
-  assert.equal((await fetch(link)).status, 200);
-  assert.equal(messages.length, beforeLink + 1);
-  const blankReplyLink = `${base}/p/${"s".repeat(32)}?msg=${encodeURIComponent("Blank reply @Wren")}&reply_to=&client_request_id=link-trial-2`;
-  assert.equal((await fetch(blankReplyLink)).status, 201);
-  assert.equal(messages.at(-1).reply_to, null);
-  const dedupBase = `${base}/p/${"s".repeat(32)}?msg=${encodeURIComponent("Same body @Wren")}`;
-  assert.equal((await fetch(dedupBase + "&context_preference=fresh")).status, 201);
-  assert.equal((await fetch(dedupBase + "&context_preference=fresh")).status, 200);
-  assert.equal((await fetch(dedupBase + "&context_preference=continue")).status, 201);
-
-  process.stdout.write("API integration passed: backlog, recent/older paging, tags, reply, retry, link provenance.\n");
+  process.stdout.write("API integration passed: private reads, backlog, recent/older paging, tags, reply, retry.\n");
 } finally {
   app.kill();
   supabase.close();

@@ -8,16 +8,13 @@ async function request(fetcher, path, options = {}) {
 }
 
 export async function readMessages(fetcher, { token, agentId = 'lana', forMe = false, afterId, beforeId } = {}) {
-  const params = new URLSearchParams({ limit: '100' });
+  if (!token) throw new Error('Enter the phone token in Settings to read the room.');
+  const params = new URLSearchParams({ limit: '100', agent_id: agentId });
   if (afterId !== undefined) params.set('after_id', String(afterId));
   if (beforeId !== undefined) params.set('before_id', String(beforeId));
-  if (forMe) {
-    if (!token) throw new Error('Enter the phone token to read your inbox.');
-    params.set('for_me', 'true');
-    params.set('agent_id', agentId);
-  }
+  if (forMe) params.set('for_me', 'true');
   return request(fetcher, `/api/messages?${params}`, {
-    headers: forMe ? { authorization: `Bearer ${token}` } : {},
+    headers: { authorization: `Bearer ${token}` },
   });
 }
 
